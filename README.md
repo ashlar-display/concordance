@@ -11,14 +11,14 @@
 > **Part of [Ashlar](https://ashlar-display.org)** — a display connection stack in Rust,
 > HDMI 2.1 first: from EDID parsing through mode negotiation to FRL link training.
 >
-> [display-types](https://github.com/DracoWhitefire/display-types) ·
-> [piaf](https://github.com/DracoWhitefire/piaf) ·
+> [display-types](https://github.com/ashlar-display/display-types) ·
+> [piaf](https://github.com/ashlar-display/piaf) ·
 > **concordance** ·
-> [cartouche](https://github.com/DracoWhitefire/cartouche) ·
-> [culvert](https://github.com/DracoWhitefire/culvert) ·
-> [plumbob](https://github.com/DracoWhitefire/plumbob) ·
-> [hdmi-hal](https://github.com/DracoWhitefire/hdmi-hal) ·
-> [hdmi-hal-i2c-dev](https://github.com/DracoWhitefire/hdmi-hal-i2c-dev)
+> [cartouche](https://github.com/ashlar-display/cartouche) ·
+> [culvert](https://github.com/ashlar-display/culvert) ·
+> [plumbob](https://github.com/ashlar-display/plumbob) ·
+> [hdmi-hal](https://github.com/ashlar-display/hdmi-hal) ·
+> [hdmi-hal-i2c-dev](https://github.com/ashlar-display/hdmi-hal-i2c-dev)
 
 HDMI 2.1 mode negotiation — policy layer of the display connection stack.
 
@@ -160,7 +160,7 @@ cable capabilities.
 
 ## Out of scope
 
-- **EDID parsing** — that's [piaf](https://github.com/DracoWhitefire/piaf).
+- **EDID parsing** — that's [piaf](https://github.com/ashlar-display/piaf).
 - **Source capability discovery** — querying DRM/KMS or VBIOS for GPU limits.
 - **Cable capability discovery** — reading the HDMI cable type marker or accepting a
   user override.
