@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   strict and permissive evaluations, a `Fits`/`Marginal`/`Exceeded` verdict and the
   deciding assumptions. Exact integer arithmetic, `no_std`, no allocation. Not yet used
   by negotiation.
+- **Audio for the FRL capacity check.** `FrlAudio` borrows the audio loads to count (none,
+  a bound such as the sink's, or what the source may send); `AudioLoad::from_descriptor`
+  maps a Short Audio Descriptor to the heaviest load a source may send for it (IEC 61937
+  rates: E-AC-3 at four times the declared rate, TrueHD and DTS-HD as High Bit Rate
+  audio). `SinkCapabilities` gains `audio_loads` and `unmodelled_audio` (from both audio
+  data blocks and the basic audio flag; `alloc` only) and `frl_audio()`, and
+  `SinkBuildWarning` gains `AudioDescriptorWithoutSampleRate`. In bare `no_std` builds a
+  sink's audio is unknown; `frl_capacity` takes the caller's loads directly.
 
 ### Changed
 

@@ -31,9 +31,23 @@
 //! assumptions named. When a point is settled, its flag stops applying.
 //!
 //! All arithmetic is exact integer arithmetic; there are no floating-point values.
+//!
+//! # Audio
+//!
+//! Audio packets travel in the blanking, so the audio decides whether a short blanking
+//! fits. [`FrlAudio`] says what audio to count: none, a bound (`AtMost`, such as the
+//! sink's descriptors: the source may send any of them or none), or what the source may
+//! send (`OneOf`). The loads are borrowed slices; nothing is copied or allocated.
+//! [`AudioLoad::from_descriptor`] maps a Short Audio Descriptor to the heaviest load a
+//! source may send for it.
+//!
+//! **Without allocation** (bare `no_std`), [`SinkCapabilities`][crate::SinkCapabilities]
+//! has no audio loads, so the sink's audio is unknown to the negotiation engine. Firmware
+//! that knows the audio calls [`frl_capacity`] with its own loads, from a `static` or stack
+//! array; see [`FrlAudio`].
 
 use bitflags::bitflags;
-use display_types::cea861::HdmiForumFrl;
+use display_types::cea861::{AudioFormat, AudioSampleRates, HdmiForumFrl, ShortAudioDescriptor};
 use display_types::{ColorBitDepth, ColorFormat, VideoMode};
 
 /// Maximum tribytes the active video may borrow from the blanking.
@@ -106,12 +120,127 @@ pub struct AudioLoad {
 }
 
 impl AudioLoad {
+    /// Basic audio, which every sink declaring basic audio support accepts: two-channel
+    /// L-PCM at up to 48 kHz (CTA-861).
+    pub const BASIC: AudioLoad = AudioLoad::new(AudioPacketType::Sample, 48_000, 2);
+
     /// An audio load.
     pub const fn new(packet_type: AudioPacketType, sample_rate_hz: u32, channels: u8) -> Self {
         Self {
             packet_type,
             sample_rate_hz,
             channels,
+        }
+    }
+
+    /// The heaviest load a source may send for a Short Audio Descriptor.
+    ///
+    /// Compressed formats travel as IEC 61937 bursts, whose rate depends on the format
+    /// (as in FFmpeg's IEC 61937 muxer, `libavformat/spdifenc.c`). Where the descriptor
+    /// does not say which variant the source sends, the heavier one is taken:
+    ///
+    /// | Format | Load |
+    /// |---|---|
+    /// | L-PCM | sample packets, the declared channels, the highest declared rate |
+    /// | AC-3, MPEG-1, MP3, MPEG-2 multichannel, AAC LC, DTS, ATRAC, WMA Pro | sample packets, 2 channels, the highest declared rate |
+    /// | Enhanced AC-3 | sample packets, 2 channels, 4 × the highest declared rate |
+    /// | DTS-HD, MLP/Dolby TrueHD | High Bit Rate packets at 192 kHz (768 kHz on the link: MAT and DTS-HD Master Audio) |
+    /// | One Bit Audio | one-bit sample packets, the declared channels, the highest declared rate |
+    /// | DST, extended and reserved codes | [`AudioMapping::Unmodelled`]: no public implementation models them |
+    ///
+    /// A descriptor with no sample rate set is [`AudioMapping::NoSampleRate`].
+    pub fn from_descriptor(sad: &ShortAudioDescriptor) -> AudioMapping {
+        let Some(rate) = highest_rate(sad.sample_rates) else {
+            return AudioMapping::NoSampleRate;
+        };
+        let sample = |channels| AudioLoad::new(AudioPacketType::Sample, rate, channels);
+        AudioMapping::Load(match sad.format {
+            AudioFormat::Lpcm => sample(sad.max_channels),
+            AudioFormat::Ac3
+            | AudioFormat::Mpeg1
+            | AudioFormat::Mp3
+            | AudioFormat::Mpeg2Multichannel
+            | AudioFormat::AacLc
+            | AudioFormat::Dts
+            | AudioFormat::Atrac
+            | AudioFormat::WmaPro => sample(2),
+            AudioFormat::EnhancedAc3 => AudioLoad::new(AudioPacketType::Sample, 4 * rate, 2),
+            AudioFormat::DtsHd | AudioFormat::MlpTrueHd => {
+                AudioLoad::new(AudioPacketType::HighBitRate, 192_000, sad.max_channels)
+            }
+            AudioFormat::OneBitAudio => {
+                AudioLoad::new(AudioPacketType::OneBitSample, rate, sad.max_channels)
+            }
+            other => return AudioMapping::Unmodelled(other),
+        })
+    }
+}
+
+/// The highest sample rate in a descriptor's rate set, in Hz.
+fn highest_rate(rates: AudioSampleRates) -> Option<u32> {
+    [
+        (AudioSampleRates::HZ_192000, 192_000),
+        (AudioSampleRates::HZ_176400, 176_400),
+        (AudioSampleRates::HZ_96000, 96_000),
+        (AudioSampleRates::HZ_88200, 88_200),
+        (AudioSampleRates::HZ_48000, 48_000),
+        (AudioSampleRates::HZ_44100, 44_100),
+        (AudioSampleRates::HZ_32000, 32_000),
+    ]
+    .into_iter()
+    .find(|(flag, _)| rates.contains(*flag))
+    .map(|(_, hz)| hz)
+}
+
+/// What [`AudioLoad::from_descriptor`] makes of a Short Audio Descriptor.
+#[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioMapping {
+    /// The heaviest load a source may send for it.
+    Load(AudioLoad),
+    /// A format whose packet load no public implementation models; it cannot be bounded.
+    Unmodelled(AudioFormat),
+    /// The descriptor declares no sample rate.
+    NoSampleRate,
+}
+
+/// The audio an FRL link must carry alongside the video.
+///
+/// The loads are borrowed: [`FrlCapacityInput`] stays `Copy`, and nothing is allocated.
+/// Each evaluation counts the heaviest load under its own readings (the
+/// [`HBR_RATE`][Assumptions::HBR_RATE] and
+/// [`AUDIO_LAYOUT_SD_LINES`][Assumptions::AUDIO_LAYOUT_SD_LINES] readings can change which
+/// one is heaviest).
+///
+/// # Without allocation
+///
+/// [`SinkCapabilities`][crate::SinkCapabilities] carries the sink's audio loads only with
+/// `alloc`. In a bare `no_std` build it has none, so the negotiation engine cannot bound a
+/// sink's audio and reports FRL candidates as unverified for audio. Firmware that knows the
+/// audio calls [`frl_capacity`] directly with its own loads, from a `static` or stack array
+/// (for example mapped from the descriptors with [`AudioLoad::from_descriptor`]).
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrlAudio<'a> {
+    /// No audio. Audio Clock Regeneration packets still count.
+    #[default]
+    None,
+    /// At most these loads, for example the sink's descriptors: the source may send any
+    /// of them, or none. The [`AUDIO_LOAD`][Assumptions::AUDIO_LOAD] assumption applies.
+    /// An empty slice is no audio.
+    AtMost(&'a [AudioLoad]),
+    /// One of these loads, for example what the source is configured to send. The
+    /// heaviest is counted, and [`AUDIO_LOAD`][Assumptions::AUDIO_LOAD] does not apply.
+    OneOf(&'a [AudioLoad]),
+}
+
+impl<'a> FrlAudio<'a> {
+    /// The loads, whichever kind; empty for [`FrlAudio::None`].
+    pub const fn loads(&self) -> &'a [AudioLoad] {
+        match self {
+            FrlAudio::None => &[],
+            FrlAudio::AtMost(l) | FrlAudio::OneOf(l) => l,
         }
     }
 }
@@ -138,10 +267,12 @@ pub enum FrlUnverified {
 }
 
 /// The input to one FRL capacity evaluation.
+///
+/// Borrows its audio loads (see [`FrlAudio`]), so it serializes but does not deserialize.
 #[non_exhaustive]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FrlCapacityInput {
+pub struct FrlCapacityInput<'a> {
     /// The FRL rate (lanes and Gbps per lane).
     pub rate: HdmiForumFrl,
     /// The pixel clock in kHz.
@@ -161,11 +292,11 @@ pub struct FrlCapacityInput {
     pub encoding: ColorFormat,
     /// The bit depth per component.
     pub depth: ColorBitDepth,
-    /// The heaviest audio the link must carry, or `None`.
-    pub audio: Option<AudioLoad>,
+    /// The audio the link must carry.
+    pub audio: FrlAudio<'a>,
 }
 
-impl FrlCapacityInput {
+impl<'a> FrlCapacityInput<'a> {
     /// An input with no borders and no audio; `v_active` is 0 until set.
     pub const fn new(
         rate: HdmiForumFrl,
@@ -184,7 +315,7 @@ impl FrlCapacityInput {
             v_active: 0,
             encoding,
             depth,
-            audio: None,
+            audio: FrlAudio::None,
         }
     }
 
@@ -201,9 +332,9 @@ impl FrlCapacityInput {
         self
     }
 
-    /// Sets the heaviest audio the link must carry, returning the updated input.
-    pub const fn with_audio(mut self, audio: AudioLoad) -> Self {
-        self.audio = Some(audio);
+    /// Sets the audio the link must carry, returning the updated input.
+    pub const fn with_audio(mut self, audio: FrlAudio<'a>) -> Self {
+        self.audio = audio;
         self
     }
 
@@ -222,7 +353,7 @@ impl FrlCapacityInput {
         rate: HdmiForumFrl,
         encoding: ColorFormat,
         depth: ColorBitDepth,
-        audio: Option<AudioLoad>,
+        audio: FrlAudio<'a>,
     ) -> Result<Self, FrlUnverified> {
         if rate == HdmiForumFrl::NotSupported {
             return Err(FrlUnverified::Tmds);
@@ -264,11 +395,14 @@ impl FrlCapacityInput {
         let mut a = Assumptions::CHARS_PER_LINE_ROUNDING
             | Assumptions::MARGIN_TOLERANCE
             | Assumptions::OVERHEAD_TRUNCATION;
-        if let Some(audio) = self.audio {
+        let loads = self.audio.loads();
+        if matches!(self.audio, FrlAudio::AtMost(_)) && !loads.is_empty() {
             a |= Assumptions::AUDIO_LOAD;
-            match audio.packet_type {
+        }
+        for load in loads {
+            match load.packet_type {
                 AudioPacketType::Sample
-                    if audio.channels > 2 && self.v_active != 0 && self.v_active <= 576 =>
+                    if load.channels > 2 && self.v_active != 0 && self.v_active <= 576 =>
                 {
                     a |= Assumptions::AUDIO_LAYOUT_SD_LINES;
                 }
@@ -437,7 +571,7 @@ impl FrlCapacityReport {
 /// When `rate` is not a known FRL rate (it is [`HdmiForumFrl::NotSupported`], or a rate
 /// added after this release) or the pixel clock is 0. [`FrlCapacityInput::from_mode`]
 /// rules out both.
-pub fn frl_capacity(input: &FrlCapacityInput) -> FrlCapacityReport {
+pub fn frl_capacity(input: &FrlCapacityInput<'_>) -> FrlCapacityReport {
     assert!(
         lanes_and_gbps(input.rate).is_some(),
         "frl_capacity needs a known FRL rate"
@@ -548,7 +682,7 @@ fn to_u32(v: u128) -> u32 {
 /// Times are counted in periods of the pixel clock at its maximum tolerance (+0.5%), so
 /// the line lasts `h_active + h_blank` periods, the active part `h_active`. Rates are
 /// characters per such period.
-fn evaluate(input: &FrlCapacityInput, alt: Assumptions) -> FrlEvaluation {
+fn evaluate(input: &FrlCapacityInput<'_>, alt: Assumptions) -> FrlEvaluation {
     let (lanes, gbps) = lanes_and_gbps(input.rate).expect("checked by frl_capacity");
     let p_khz = u128::from(input.pixel_clock_khz);
     let ha = u128::from(input.h_active);
@@ -585,33 +719,33 @@ fn evaluate(input: &FrlCapacityInput, alt: Assumptions) -> FrlEvaluation {
     let k_d = raw_d * o_d;
 
     // Audio: packets per second (ap per sample, plus two ACR packets' worth of 1500/s) at
-    // +1000 ppm, over the line. `ap4` is four times the packets per sample.
-    let (f_audio, ap4) = match input.audio {
-        Some(a) if !alt.contains(Assumptions::AUDIO_LOAD) => {
+    // +1000 ppm, over the line, for the heaviest load under these readings. `load4` is
+    // four times the audio packets per second.
+    let counted: &[AudioLoad] = match input.audio {
+        FrlAudio::AtMost(_) if alt.contains(Assumptions::AUDIO_LOAD) => &[],
+        audio => audio.loads(),
+    };
+    let load4 = counted
+        .iter()
+        .map(|a| {
             let rate = u128::from(a.sample_rate_hz);
             match a.packet_type {
                 AudioPacketType::Sample => {
                     let layout0 = a.channels <= 2
                         || (alt.contains(Assumptions::AUDIO_LAYOUT_SD_LINES)
                             && input.v_active <= 576);
-                    (rate, if layout0 { 1 } else { 4 })
+                    rate * if layout0 { 1 } else { 4 }
                 }
-                AudioPacketType::OneBitSample => (rate, 1),
-                AudioPacketType::HighBitRate => {
-                    let rate = if alt.contains(Assumptions::HBR_RATE) {
-                        rate
-                    } else {
-                        4 * rate
-                    };
-                    (rate, 4)
-                }
+                AudioPacketType::OneBitSample => rate,
+                AudioPacketType::HighBitRate if alt.contains(Assumptions::HBR_RATE) => 4 * rate,
+                AudioPacketType::HighBitRate => 16 * rate,
             }
-        }
-        _ => (0, 0),
-    };
-    // ceil((f_audio·ap4/4 + 3000) · 1001/1000 · line · 200 / (p_khz·1000 · 201))
+        })
+        .max()
+        .unwrap_or(0);
+    // ceil((load4/4 + 3000) · 1001/1000 · line · 200 / (p_khz·1000 · 201))
     let audio_packets = div_ceil(
-        (f_audio * ap4 + 12_000) * 1001 * line * 200,
+        (load4 + 12_000) * 1001 * line * 200,
         4000 * p_khz * 1000 * 201,
     );
     let blank_audio_min = 32 + 32 * audio_packets;
@@ -731,13 +865,12 @@ mod tests {
         ha: u16,
         hb: u16,
         depth: ColorBitDepth,
-    ) -> FrlCapacityInput {
+    ) -> FrlCapacityInput<'static> {
         FrlCapacityInput::new(rate, p_khz, ha, hb, ColorFormat::Rgb444, depth)
     }
 
-    fn eight_channels_192k() -> AudioLoad {
-        AudioLoad::new(AudioPacketType::Sample, 192_000, 8)
-    }
+    const EIGHT_192K: AudioLoad = AudioLoad::new(AudioPacketType::Sample, 192_000, 8);
+    const HBR_192K: AudioLoad = AudioLoad::new(AudioPacketType::HighBitRate, 192_000, 8);
 
     /// 3840×2160 @ 60 Hz (VIC 97: 594 MHz, h_blank 560), RGB 12-bit: the walkthrough mode.
     fn vic97_rgb12(rate: HdmiForumFrl) -> FrlCapacityReport {
@@ -816,7 +949,7 @@ mod tests {
         let input = |hb| {
             rgb(R12, 533_250, 3840, hb, ColorBitDepth::Depth8)
                 .with_v_active(2160)
-                .with_audio(eight_channels_192k())
+                .with_audio(FrlAudio::AtMost(&[EIGHT_192K]))
         };
         let r = frl_capacity(&input(96));
         assert_eq!(r.verdict(), FrlVerdict::Fits);
@@ -875,7 +1008,7 @@ mod tests {
         // fits; no audio fits too, so the audio load decides as well.
         let input = rgb(R3, 27_000, 720, 100, ColorBitDepth::Depth8)
             .with_v_active(576)
-            .with_audio(eight_channels_192k());
+            .with_audio(FrlAudio::AtMost(&[EIGHT_192K]));
         assert!(
             input
                 .applicable_assumptions()
@@ -901,7 +1034,7 @@ mod tests {
         // HBR at 4 × 192 kHz needs 224 blanking tribytes; at 192 kHz it fits in 96.
         let input = rgb(R12, 533_250, 3840, 96, ColorBitDepth::Depth8)
             .with_v_active(2160)
-            .with_audio(AudioLoad::new(AudioPacketType::HighBitRate, 192_000, 8));
+            .with_audio(FrlAudio::AtMost(&[HBR_192K]));
         let r = frl_capacity(&input);
         assert_eq!(r.verdict(), FrlVerdict::Marginal);
         assert_eq!(r.deciding, Assumptions::HBR_RATE | Assumptions::AUDIO_LOAD);
@@ -939,7 +1072,7 @@ mod tests {
         assert_eq!(base.applicable_assumptions(), always);
         // Multichannel audio with the line count unknown: layout 1, no SD assumption.
         assert_eq!(
-            base.with_audio(eight_channels_192k())
+            base.with_audio(FrlAudio::AtMost(&[EIGHT_192K]))
                 .applicable_assumptions(),
             always | Assumptions::AUDIO_LOAD
         );
@@ -957,7 +1090,7 @@ mod tests {
             R6_4,
             ColorFormat::Rgb444,
             ColorBitDepth::Depth12,
-            None,
+            FrlAudio::None,
         )
         .unwrap();
         assert_eq!(
@@ -979,13 +1112,19 @@ mod tests {
             R6_4,
             ColorFormat::Rgb444,
             ColorBitDepth::Depth12,
-            None,
+            FrlAudio::None,
         )
         .unwrap();
         assert_eq!((input.h_active, input.h_border), (3856, 8));
 
         let try_mode = |m: &VideoMode, rate| {
-            FrlCapacityInput::from_mode(m, rate, ColorFormat::Rgb444, ColorBitDepth::Depth8, None)
+            FrlCapacityInput::from_mode(
+                m,
+                rate,
+                ColorFormat::Rgb444,
+                ColorBitDepth::Depth8,
+                FrlAudio::None,
+            )
         };
         assert_eq!(
             try_mode(&mode, HdmiForumFrl::NotSupported),
@@ -1009,5 +1148,91 @@ mod tests {
         assert_eq!(Margin::new(2, 4), Margin::new(1, 2));
         assert_eq!(a.ppm(), -333_334); // rounded towards negative infinity
         assert_eq!(b.ppm(), 142_857);
+    }
+
+    #[test]
+    fn heaviest_load_is_taken_per_reading() {
+        // HBR declared at 96 kHz and 8-channel L-PCM at 192 kHz. With HBR at 4 × 96 kHz the
+        // HBR load is the heavier (384 000 packets/s against 192 000); at 96 kHz it is the
+        // lighter, and the L-PCM load must be counted instead.
+        const HBR_96K: AudioLoad = AudioLoad::new(AudioPacketType::HighBitRate, 96_000, 8);
+        let input = |audio| {
+            rgb(R12, 594_000, 3840, 560, ColorBitDepth::Depth8)
+                .with_v_active(2160)
+                .with_audio(audio)
+        };
+        let both = frl_capacity(&input(FrlAudio::OneOf(&[HBR_96K, EIGHT_192K])));
+        let lpcm = frl_capacity(&input(FrlAudio::OneOf(&[EIGHT_192K])));
+        assert_eq!(both.applicable, lpcm.applicable | Assumptions::HBR_RATE);
+        assert!(both.strict.audio_packets_per_line > lpcm.strict.audio_packets_per_line);
+        assert_eq!(both.strict.audio_packets_per_line, 3);
+        assert_eq!(lpcm.strict.audio_packets_per_line, 2);
+        // The HBR_RATE reading's evaluation counts the L-PCM load, not the lighter HBR one.
+        assert!(both.permissive.readings.contains(Assumptions::HBR_RATE));
+        assert_eq!(both.permissive.audio_packets_per_line, 2);
+    }
+
+    #[test]
+    fn audio_kinds() {
+        let base = rgb(R12, 594_000, 3840, 560, ColorBitDepth::Depth8);
+        // What the source may send: counted, no AUDIO_LOAD assumption.
+        let one_of = base.with_audio(FrlAudio::OneOf(&[EIGHT_192K]));
+        assert!(
+            !one_of
+                .applicable_assumptions()
+                .contains(Assumptions::AUDIO_LOAD)
+        );
+        assert_eq!(frl_capacity(&one_of).permissive.audio_packets_per_line, 2);
+        // An empty bound is no audio.
+        let empty = base.with_audio(FrlAudio::AtMost(&[]));
+        assert_eq!(
+            empty.applicable_assumptions(),
+            base.applicable_assumptions()
+        );
+        assert_eq!(frl_capacity(&empty), frl_capacity(&base));
+    }
+
+    #[test]
+    fn descriptor_mapping() {
+        use display_types::cea861::{AudioFormatInfo, AudioSampleRates as Rates};
+        let sad = |format, channels, rates| {
+            ShortAudioDescriptor::new(format, channels, rates, AudioFormatInfo::Raw(0))
+        };
+        let load = |t, hz, ch| AudioMapping::Load(AudioLoad::new(t, hz, ch));
+        use AudioPacketType::{HighBitRate, OneBitSample, Sample};
+        let all = Rates::HZ_32000 | Rates::HZ_48000 | Rates::HZ_96000 | Rates::HZ_192000;
+        assert_eq!(
+            AudioLoad::from_descriptor(&sad(AudioFormat::Lpcm, 8, all)),
+            load(Sample, 192_000, 8)
+        );
+        // Compressed formats are two-channel IEC 61937 streams at the declared rate.
+        assert_eq!(
+            AudioLoad::from_descriptor(&sad(AudioFormat::Ac3, 6, Rates::HZ_48000)),
+            load(Sample, 48_000, 2)
+        );
+        // Enhanced AC-3 at four times it.
+        assert_eq!(
+            AudioLoad::from_descriptor(&sad(AudioFormat::EnhancedAc3, 8, Rates::HZ_48000)),
+            load(Sample, 192_000, 2)
+        );
+        // TrueHD and DTS-HD: HBR at 192 kHz whatever the declared rate (768 kHz MAT).
+        for format in [AudioFormat::MlpTrueHd, AudioFormat::DtsHd] {
+            assert_eq!(
+                AudioLoad::from_descriptor(&sad(format, 8, Rates::HZ_48000)),
+                load(HighBitRate, 192_000, 8)
+            );
+        }
+        assert_eq!(
+            AudioLoad::from_descriptor(&sad(AudioFormat::OneBitAudio, 6, Rates::HZ_44100)),
+            load(OneBitSample, 44_100, 6)
+        );
+        assert_eq!(
+            AudioLoad::from_descriptor(&sad(AudioFormat::Dst, 6, Rates::HZ_44100)),
+            AudioMapping::Unmodelled(AudioFormat::Dst)
+        );
+        assert_eq!(
+            AudioLoad::from_descriptor(&sad(AudioFormat::Lpcm, 2, Rates::empty())),
+            AudioMapping::NoSampleRate
+        );
     }
 }
