@@ -5,7 +5,7 @@
 ## Clone and build
 
 ```sh
-git clone https://github.com/DracoWhitefire/concordance.git
+git clone https://github.com/ashlar-display/concordance.git
 cd concordance
 cargo build
 ```
