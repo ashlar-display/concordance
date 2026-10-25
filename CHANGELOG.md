@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`frl` module: FRL capacity.** `frl_capacity` decides whether an HDMI 2.1 FRL rate can
+  carry an uncompressed timing: audio in the blanking, borrowing from the blanking (at most
+  400 tribytes), and the line's characters with the link overhead. It follows the public
+  implementations (amdgpu's `dml1_frl_cap_chk`, i915's FRL DFM), not the specification,
+  which is not public. Where they disagree and neither is visibly wrong, the point is an
+  `Assumptions` flag; every combination is evaluated, and the `FrlCapacityReport` gives the
+  strict and permissive evaluations, a `Fits`/`Marginal`/`Exceeded` verdict and the
+  deciding assumptions. Exact integer arithmetic, `no_std`, no allocation. Not yet used
+  by negotiation.
+
 ### Changed
 
 - **Part of Ashlar** — the README now opens with a block naming the

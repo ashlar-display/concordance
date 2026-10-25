@@ -26,6 +26,7 @@ extern crate std;
 pub mod diagnostic;
 pub mod engine;
 pub mod error;
+pub mod frl;
 pub mod output;
 pub mod probe;
 pub mod types;
