@@ -37,9 +37,9 @@ dependencies = [
 
 [[package]]
 name = "piaf"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cf35fc343663d980bbdf3979ef65dd74e7e6c9ae16b4bd91af4893e00991e42"
+checksum = "801f79c1ffb51b2feb3ef2d990c62dc1fddf78583f71dcdbed2db14bfa3a76dd"
 dependencies = [
  "bitflags",
  "display-types",
