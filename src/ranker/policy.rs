@@ -38,15 +38,45 @@ pub struct NegotiationPolicy {
 
     /// Penalize configurations that require DSC.
     pub penalize_dsc: bool,
+
+    /// FRL candidates that fit their rate under some readings of the capacity computation
+    /// only ([`Warning::FrlCapacityMarginal`][crate::Warning::FrlCapacityMarginal]).
+    pub frl_marginal: FrlCandidateHandling,
+
+    /// FRL candidates whose capacity could not be checked, or not fully
+    /// ([`Warning::FrlCapacityUnverified`][crate::Warning::FrlCapacityUnverified]).
+    pub frl_unverified: FrlCandidateHandling,
+}
+
+/// How the ranker treats an FRL candidate carrying a capacity warning.
+///
+/// There is no option to drop such candidates: the ranker has no way to report a
+/// candidate it removes, and accepted candidates are never discarded silently. A caller
+/// that never wants them filters on the warnings each configuration carries.
+#[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrlCandidateHandling {
+    /// Rank it as any other configuration; the warning stays on it.
+    Keep,
+    /// Rank it after every configuration without such a warning (right after the DSC
+    /// criterion), and record that in its trace.
+    Deprioritize,
 }
 
 impl NegotiationPolicy {
     /// Prefer maximum quality: native resolution, max color fidelity, then refresh rate.
+    ///
+    /// All presets deprioritize marginal FRL candidates (there is evidence of risk) and
+    /// keep unverified ones (mostly "could not check": one unmodelled audio format would
+    /// otherwise push every FRL candidate below TMDS).
     pub const BEST_QUALITY: Self = Self {
         prefer_native_resolution: true,
         prefer_color_fidelity: true,
         prefer_high_refresh: false,
         penalize_dsc: true,
+        frl_marginal: FrlCandidateHandling::Deprioritize,
+        frl_unverified: FrlCandidateHandling::Keep,
     };
 
     /// Prefer maximum performance: native resolution, max refresh rate, then color fidelity.
@@ -55,6 +85,8 @@ impl NegotiationPolicy {
         prefer_color_fidelity: false,
         prefer_high_refresh: true,
         penalize_dsc: false,
+        frl_marginal: FrlCandidateHandling::Deprioritize,
+        frl_unverified: FrlCandidateHandling::Keep,
     };
 
     /// Prefer power saving: lower refresh rates and simpler configurations are ranked higher.
@@ -68,6 +100,8 @@ impl NegotiationPolicy {
         prefer_color_fidelity: false,
         prefer_high_refresh: false,
         penalize_dsc: true,
+        frl_marginal: FrlCandidateHandling::Deprioritize,
+        frl_unverified: FrlCandidateHandling::Keep,
     };
 }
 

@@ -11,7 +11,8 @@ use display_types::{ColorFormat, VideoMode};
 use crate::diagnostic::Diagnostic;
 use crate::output::config::NegotiatedConfig;
 use crate::output::trace::DecisionStep;
-use crate::ranker::policy::NegotiationPolicy;
+use crate::output::warning::Warning;
+use crate::ranker::policy::{FrlCandidateHandling, NegotiationPolicy};
 
 pub use policy::NegotiationPolicy as Policy;
 
@@ -69,9 +70,9 @@ fn color_format_quality(fmt: ColorFormat) -> u8 {
 /// Returns [`Ordering::Less`] when `a` should appear before `b` in the ranked output
 /// (i.e. `a` is the preferred configuration). Criteria are applied in priority order;
 /// the first non-equal result determines the outcome.
-fn compare_configs<W>(
-    a: &NegotiatedConfig<W>,
-    b: &NegotiatedConfig<W>,
+fn compare_configs(
+    a: &NegotiatedConfig<Warning>,
+    b: &NegotiatedConfig<Warning>,
     policy: &NegotiationPolicy,
     native_pixels: u32,
 ) -> Ordering {
@@ -81,6 +82,12 @@ fn compare_configs<W>(
         if ord != Ordering::Equal {
             return ord;
         }
+    }
+
+    // 1b. Deprioritized FRL capacity warnings: configurations without them first.
+    let ord = frl_deprioritized(a, policy).cmp(&frl_deprioritized(b, policy));
+    if ord != Ordering::Equal {
+        return ord;
     }
 
     // 2. Native resolution: native sorts before non-native.
@@ -182,20 +189,39 @@ fn compare_configs<W>(
     pixel_area(&b.resolved.mode).cmp(&pixel_area(&a.resolved.mode))
 }
 
+/// Whether `config` carries an FRL capacity warning that `policy` deprioritizes.
+fn frl_deprioritized(config: &NegotiatedConfig<Warning>, policy: &NegotiationPolicy) -> bool {
+    config.warnings.iter().any(|w| match w {
+        Warning::FrlCapacityMarginal { .. } => {
+            policy.frl_marginal == FrlCandidateHandling::Deprioritize
+        }
+        Warning::FrlCapacityUnverified { .. } => {
+            policy.frl_unverified == FrlCandidateHandling::Deprioritize
+        }
+        _ => false,
+    })
+}
+
 /// Appends [`DecisionStep::PreferenceApplied`] steps to `config`'s trace for each
 /// ranking criterion that applies to this specific configuration.
 ///
 /// These are per-config facts, not relative comparisons. They give a diagnostic tool
 /// enough context to explain a configuration's characteristics without requiring
 /// knowledge of the full ranked list.
-fn record_preferences<W>(
-    config: &mut NegotiatedConfig<W>,
+fn record_preferences(
+    config: &mut NegotiatedConfig<Warning>,
     policy: &NegotiationPolicy,
     native_pixels: u32,
 ) {
     if policy.penalize_dsc && config.resolved.dsc_required {
         config.trace.steps.push(DecisionStep::PreferenceApplied {
             rule: "DSC penalized".into(),
+        });
+    }
+
+    if frl_deprioritized(config, policy) {
+        config.trace.steps.push(DecisionStep::PreferenceApplied {
+            rule: "FRL capacity warning deprioritized".into(),
         });
     }
 
@@ -1125,5 +1151,115 @@ mod tests {
         for c in &result {
             assert!(has_preference(c, "color fidelity preferred"));
         }
+    }
+
+    // --- FRL capacity warnings ---
+
+    fn frl(depth: ColorBitDepth, rate: HdmiForumFrl) -> NegotiatedConfig<Warning> {
+        config(
+            3840,
+            2160,
+            60,
+            false,
+            ColorFormat::Rgb444,
+            depth,
+            rate,
+            false,
+        )
+    }
+
+    fn marginal() -> Warning {
+        Warning::FrlCapacityMarginal {
+            rate: HdmiForumFrl::Rate6Gbps4Lanes,
+            deciding: crate::frl::Assumptions::MARGIN_TOLERANCE,
+            shortfall: crate::frl::FrlShortfall::Borrow,
+        }
+    }
+
+    fn unverified() -> Warning {
+        Warning::FrlCapacityUnverified {
+            rate: HdmiForumFrl::Rate6Gbps4Lanes,
+            reason: crate::frl::FrlUnverified::NoBlanking,
+        }
+    }
+
+    #[test]
+    fn presets_deprioritize_marginal_and_keep_unverified() {
+        use crate::ranker::policy::FrlCandidateHandling::{Deprioritize, Keep};
+        for p in [
+            NegotiationPolicy::BEST_QUALITY,
+            NegotiationPolicy::BEST_PERFORMANCE,
+            NegotiationPolicy::POWER_SAVING,
+        ] {
+            assert_eq!((p.frl_marginal, p.frl_unverified), (Deprioritize, Keep));
+        }
+    }
+
+    #[test]
+    fn marginal_frl_ranks_after_a_sure_config() {
+        // 12-bit would rank first on colour fidelity; marginal, it goes after 10-bit.
+        let mut deep = frl(ColorBitDepth::Depth12, HdmiForumFrl::Rate6Gbps4Lanes);
+        deep.warnings.push(marginal());
+        let sure = frl(ColorBitDepth::Depth10, HdmiForumFrl::Rate6Gbps4Lanes);
+        let policy = NegotiationPolicy::BEST_QUALITY;
+        assert_eq!(
+            compare_configs(&sure, &deep, &policy, NATIVE),
+            Ordering::Less
+        );
+
+        let ranked = DefaultRanker.rank(Vec::from([deep, sure]), &policy);
+        assert_eq!(ranked[0].resolved.bit_depth, ColorBitDepth::Depth10);
+        assert!(ranked[1].trace.steps.iter().any(|s| matches!(
+            s,
+            DecisionStep::PreferenceApplied { rule } if rule == "FRL capacity warning deprioritized"
+        )));
+        assert!(!ranked[0].trace.steps.iter().any(|s| matches!(
+            s,
+            DecisionStep::PreferenceApplied { rule } if rule == "FRL capacity warning deprioritized"
+        )));
+    }
+
+    #[test]
+    fn kept_warnings_rank_as_usual() {
+        let mut policy = NegotiationPolicy::BEST_QUALITY;
+        policy.frl_marginal = crate::ranker::policy::FrlCandidateHandling::Keep;
+        let mut deep = frl(ColorBitDepth::Depth12, HdmiForumFrl::Rate6Gbps4Lanes);
+        deep.warnings.push(marginal());
+        let sure = frl(ColorBitDepth::Depth10, HdmiForumFrl::Rate6Gbps4Lanes);
+        assert_eq!(
+            compare_configs(&deep, &sure, &policy, NATIVE),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn unverified_is_kept_by_default_and_can_be_deprioritized() {
+        let mut deep = frl(ColorBitDepth::Depth12, HdmiForumFrl::Rate6Gbps4Lanes);
+        deep.warnings.push(unverified());
+        let sure = frl(ColorBitDepth::Depth10, HdmiForumFrl::Rate6Gbps4Lanes);
+        let mut policy = NegotiationPolicy::BEST_QUALITY;
+        assert_eq!(
+            compare_configs(&deep, &sure, &policy, NATIVE),
+            Ordering::Less
+        );
+        policy.frl_unverified = crate::ranker::policy::FrlCandidateHandling::Deprioritize;
+        assert_eq!(
+            compare_configs(&sure, &deep, &policy, NATIVE),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn dsc_penalty_comes_before_the_frl_criterion() {
+        // A marginal non-DSC config still ranks before a sure DSC one.
+        let mut marginal_frl = frl(ColorBitDepth::Depth10, HdmiForumFrl::Rate6Gbps4Lanes);
+        marginal_frl.warnings.push(marginal());
+        let mut dsc = frl(ColorBitDepth::Depth10, HdmiForumFrl::Rate6Gbps4Lanes);
+        dsc.resolved.dsc_required = true;
+        let policy = NegotiationPolicy::BEST_QUALITY;
+        assert_eq!(
+            compare_configs(&marginal_frl, &dsc, &policy, NATIVE),
+            Ordering::Less
+        );
     }
 }

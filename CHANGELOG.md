@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without alloc). `FrlUnverified` gains `UnmodelledAudio` and `AudioUnknown`. The
   violation and the marginal warning carry the shortfall (and the deciding assumptions);
   `FrlCapacityCheck::report` gives the full report for a candidate.
+- **`NegotiationPolicy::frl_marginal` and `frl_unverified`** (`FrlCandidateHandling::Keep`
+  or `Deprioritize`): the default ranker puts deprioritized FRL candidates after every
+  configuration without such a warning (right after the DSC penalty) and records it in
+  their trace. All presets deprioritize marginal candidates and keep unverified ones.
+  There is no option to drop them: accepted candidates are never discarded silently;
+  filter on the warnings instead.
 
 ### Changed
 
