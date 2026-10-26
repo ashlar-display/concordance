@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking changes
 
+- **Requires display-types 0.5.** concordance's public types (`VideoMode` and the colour
+  and audio types in `SinkCapabilities`, `CandidateConfig` and `NegotiatedConfig`) are
+  display-types', so callers move to 0.5 with it. The FRL capacity check reads
+  `VideoMode::h_blank`, and `sink_capabilities_from_display` reads 0.5's
+  `HdmiAudioBlock` (stream count and 3D audio).
 - **Constraint check results have private storage and the same type in every build.**
   `CheckResult<W, V>` is now `Result<Warnings<W>, Violations<V>>` (it was
   `Result<Vec<W>, Vec<V>>` with alloc and `Result<[Option<W>; MAX_WARNINGS], V>`
