@@ -42,8 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which is not public. Where they disagree and neither is visibly wrong, the point is an
   `Assumptions` flag; every combination is evaluated, and the `FrlCapacityReport` gives the
   strict and permissive evaluations, a `Fits`/`Marginal`/`Exceeded` verdict and the
-  deciding assumptions. Exact integer arithmetic, `no_std`, no allocation. Not yet used
-  by negotiation.
+  deciding assumptions. Exact integer arithmetic, `no_std`, no allocation.
 - **Audio for the FRL capacity check.** `FrlAudio` borrows the audio loads to count (none,
   a bound such as the sink's, or what the source may send); `AudioLoad::from_descriptor`
   maps a Short Audio Descriptor to the heaviest load a source may send for it (IEC 61937
@@ -62,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `Warning::FrlCapacityMarginal` (naming the deciding assumptions) when it fits under
   some, and with `Warning::FrlCapacityUnverified` when the capacity cannot be checked, or
   not fully (no blanking or pixel clock, DSC, an unmodelled audio format, or no audio data
-  without alloc). `FrlUnverified` gains `UnmodelledAudio` and `AudioUnknown`. The
+  without alloc), each with its `FrlUnverified` reason. The
   violation and the marginal warning carry the shortfall (and the deciding assumptions);
   `FrlCapacityCheck::report` gives the full report for a candidate.
 - **`NegotiationPolicy::frl_marginal` and `frl_unverified`** (`FrlCandidateHandling::Keep`
@@ -90,11 +89,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   move, verifies with `--owner DracoWhitefire --signer-repo DracoWhitefire/concordance`
   (see "Verifying releases" in the README). The code of conduct is now the organization's,
   shared by every Ashlar repository; the repository's own copy is removed.
-
-### Fixed
-
-- **The default engine reported no warnings.** It now collects them from its rules for
-  every accepted candidate (up to `MAX_WARNINGS` without alloc).
 
 ## [0.2.0] - 2026-10-18
 

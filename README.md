@@ -108,9 +108,10 @@ associated `Warning` and `Violation` types bounded by `Diagnostic`, and a `Const
 can report warnings of its engine's type. A custom component emits its own variants with
 full type fidelity — no wrapping, no loss of structured information.
 
-**FRL rates that can carry the mode.** An FRL rate within every ceiling is accepted only if
-it can carry the timing: audio in the blanking, borrowing, and the line's characters with the
-link overhead. The HDMI 2.1 specification is not public; the computation follows the public
+**FRL rates that can carry the mode.** An FRL rate within every ceiling is rejected when it
+cannot carry the timing: audio in the blanking, borrowing, and the line's characters with
+the link overhead. A candidate whose capacity cannot be checked (no blanking, DSC, unknown
+audio) is accepted with a warning saying so. The HDMI 2.1 specification is not public; the computation follows the public
 implementations (amdgpu, i915) and evaluates every reading where they disagree, so a rate
 that fits under some readings only is accepted with a warning naming what decides, and
 `NegotiationPolicy` ranks it after the sure ones. See `doc/architecture.md`.

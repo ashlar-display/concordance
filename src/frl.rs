@@ -25,8 +25,11 @@
 //! Where neither reading is visibly wrong, the point is an [`Assumptions`] flag, and
 //! [`frl_capacity`] evaluates every combination of readings. The report's
 //! [`strict`][FrlCapacityReport::strict] and [`permissive`][FrlCapacityReport::permissive]
-//! evaluations are the worst and the best of them; between them is the honest extent of
-//! what is known. A timing that fits one way and not the other is
+//! evaluations are the worst and the best of them. For amdgpu's procedure and the named
+//! points that band is the honest extent of what is known; i915's integer arithmetic
+//! truncates at further steps (the line time in nanoseconds, the character rate rounded to
+//! whole Mchar/s, and others) that are not modelled, so an i915 result can fall outside
+//! it. A timing that fits one way and not the other is
 //! [`FrlVerdict::Marginal`], with the [`deciding`][FrlCapacityReport::deciding]
 //! assumptions named. When a point is settled, its flag stops applying.
 //!
@@ -64,7 +67,9 @@ bitflags! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct Assumptions: u8 {
-        /// FRL characters per line: floored (amdgpu), or, when set, rounded up (i915).
+        /// FRL characters per line: the exact value floored (amdgpu), or, when set, rounded
+        /// up (the direction i915 rounds; i915's value also passes through truncated
+        /// intermediate steps, which are not modelled).
         /// Always applies.
         const CHARS_PER_LINE_ROUNDING = 1 << 0;
         /// The final margin must be above zero (i915), or, when set, may go down to −1/100
@@ -402,11 +407,14 @@ impl<'a> FrlCapacityInput<'a> {
 
     /// The input for `mode` at `rate`, in `encoding` and `depth`, with `audio`.
     ///
-    /// `h_active` is the mode's width plus both borders.
+    /// `h_active` is the mode's width plus both horizontal borders, `v_active` its height
+    /// plus both vertical borders (as amdgpu counts the active lines). Both saturate at
+    /// `u16::MAX`, which no real timing reaches.
     ///
     /// # Errors
     ///
     /// [`FrlUnverified::Tmds`] for [`HdmiForumFrl::NotSupported`],
+    /// [`FrlUnverified::UnknownRate`] for a rate added after this release,
     /// [`FrlUnverified::NoBlanking`] or [`FrlUnverified::NoPixelClock`] when the mode lacks
     /// them, [`FrlUnverified::UnsupportedEncoding`] for a colour format the computation
     /// does not know.
@@ -423,13 +431,7 @@ impl<'a> FrlCapacityInput<'a> {
         if lanes_and_gbps(rate).is_none() {
             return Err(FrlUnverified::UnknownRate);
         }
-        if !matches!(
-            encoding,
-            ColorFormat::Rgb444
-                | ColorFormat::YCbCr444
-                | ColorFormat::YCbCr422
-                | ColorFormat::YCbCr420
-        ) {
+        if !known_encoding(encoding) {
             return Err(FrlUnverified::UnsupportedEncoding);
         }
         let h_blank = mode.h_blank.ok_or(FrlUnverified::NoBlanking)?;
@@ -445,7 +447,7 @@ impl<'a> FrlCapacityInput<'a> {
             h_active,
             h_blank,
             h_border,
-            v_active: mode.height,
+            v_active: mode.height.saturating_add(2 * u16::from(mode.v_border)),
             encoding,
             depth,
             audio,
@@ -480,15 +482,52 @@ impl<'a> FrlCapacityInput<'a> {
 }
 
 /// An exact signed fraction: the share of a line's FRL characters left over.
+///
+/// Always in lowest terms with a positive denominator, and both parts within
+/// [`MARGIN_LIMIT`][Self::MARGIN_LIMIT], so comparisons and [`ppm`][Self::ppm] cannot
+/// overflow. Deserializing checks the same: it reduces the fraction and rejects a zero
+/// denominator or parts beyond the limit.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "MarginParts"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Margin {
     numer: i128,
     denom: u128,
 }
 
+/// A `Margin` as serialized, before it is checked.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct MarginParts {
+    numer: i128,
+    denom: u128,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<MarginParts> for Margin {
+    type Error = &'static str;
+
+    fn try_from(p: MarginParts) -> Result<Self, Self::Error> {
+        let limit = Margin::MARGIN_LIMIT;
+        if p.denom == 0 {
+            Err("margin denominator is zero")
+        } else if p.numer.unsigned_abs() > limit || p.denom > limit {
+            Err("margin numerator or denominator out of range")
+        } else {
+            Ok(Margin::new(p.numer, p.denom))
+        }
+    }
+}
+
 impl Margin {
+    /// The largest numerator magnitude or denominator a `Margin` holds, 2⁶². The
+    /// computation's margins stay below about 1.4 × 10¹⁸ (< 2⁶¹) for every input, and
+    /// within it the cross-multiplication in `cmp` and the scaling in `ppm` fit `i128`.
+    pub const MARGIN_LIMIT: u128 = 1 << 62;
+
     fn new(numer: i128, denom: u128) -> Self {
+        debug_assert!(denom > 0);
+        debug_assert!(numer.unsigned_abs() <= Self::MARGIN_LIMIT && denom <= Self::MARGIN_LIMIT);
         let g = gcd(numer.unsigned_abs(), denom).max(1);
         Self {
             numer: numer / g as i128,
@@ -587,6 +626,9 @@ pub struct FrlEvaluation {
     /// The combination of readings (set flags take their second reading).
     pub readings: Assumptions,
     /// FRL characters per line, at the slowest permitted bit rate.
+    ///
+    /// The count fields saturate at `u32::MAX` (reached only at absurd inputs, e.g. a
+    /// pixel clock of a few kHz); the verdict uses the exact values.
     pub chars_per_line: u32,
     /// Tribytes of active video per line.
     pub tribytes_active: u32,
@@ -626,14 +668,19 @@ pub struct FrlCapacityReport {
     /// The assumptions that applied to the input.
     pub applicable: Assumptions,
     /// The worst evaluation: a failing one with the lowest margin if any fails, otherwise
-    /// the one with the lowest margin.
+    /// the one with the lowest margin. On equal margins the first evaluated is kept, so
+    /// its [`readings`][FrlEvaluation::readings] may include lenient ones that made no
+    /// difference.
     pub strict: FrlEvaluation,
     /// The best evaluation: a passing one with the highest margin if any passes,
-    /// otherwise the one with the highest margin.
+    /// otherwise the one with the highest margin (ties as for `strict`).
     pub permissive: FrlEvaluation,
-    /// The assumptions whose reading alone, with every other reading held, changes
-    /// whether the timing fits. Empty unless the verdict is
-    /// [`Marginal`][FrlVerdict::Marginal], and never empty when it is.
+    /// The assumptions whose reading changes whether the timing fits, for at least one
+    /// combination of the other readings (flipping it alone, the others held there).
+    /// Empty unless the verdict is [`Marginal`][FrlVerdict::Marginal], and never empty when
+    /// it is: between a passing and a failing combination some single flip changes the
+    /// outcome. An assumption that only decides together with another (rounding, which
+    /// only moves the margin, always comes with the margin tolerance) is listed with it.
     pub deciding: Assumptions,
 }
 
@@ -654,8 +701,9 @@ impl FrlCapacityReport {
 /// # Panics
 ///
 /// When `rate` is not a known FRL rate (it is [`HdmiForumFrl::NotSupported`], or a rate
-/// added after this release) or the pixel clock is 0. [`FrlCapacityInput::from_mode`]
-/// rules out both.
+/// added after this release), the pixel clock is 0, or the colour format is not one the
+/// computation knows (RGB, YCbCr 4:4:4, 4:2:2, 4:2:0). [`FrlCapacityInput::from_mode`]
+/// rules out all three.
 pub fn frl_capacity(input: &FrlCapacityInput<'_>) -> FrlCapacityReport {
     assert!(
         lanes_and_gbps(input.rate).is_some(),
@@ -664,6 +712,10 @@ pub fn frl_capacity(input: &FrlCapacityInput<'_>) -> FrlCapacityReport {
     assert!(
         input.pixel_clock_khz > 0,
         "frl_capacity needs a pixel clock"
+    );
+    assert!(
+        known_encoding(input.encoding),
+        "frl_capacity needs a known colour format"
     );
     let applicable = input.applicable_assumptions();
     let mask = applicable.bits();
@@ -732,6 +784,14 @@ fn better(a: FrlEvaluation, b: FrlEvaluation) -> FrlEvaluation {
         _ if b.margin > a.margin => b,
         _ => a,
     }
+}
+
+/// The colour formats the computation knows.
+fn known_encoding(encoding: ColorFormat) -> bool {
+    matches!(
+        encoding,
+        ColorFormat::Rgb444 | ColorFormat::YCbCr444 | ColorFormat::YCbCr422 | ColorFormat::YCbCr420
+    )
 }
 
 /// Lanes and Gbps per lane for an FRL rate; `None` for TMDS and unknown rates.
@@ -1189,9 +1249,10 @@ mod tests {
         );
         assert_eq!(frl_capacity(&input), vic97_rgb12(R6_4));
 
-        // Borders count as active.
+        // Borders count as active, horizontally and vertically.
         let mut bordered = mode.clone();
         bordered.h_border = 8;
+        bordered.v_border = 4;
         let input = FrlCapacityInput::from_mode(
             &bordered,
             R6_4,
@@ -1200,7 +1261,10 @@ mod tests {
             FrlAudio::None,
         )
         .unwrap();
-        assert_eq!((input.h_active, input.h_border), (3856, 8));
+        assert_eq!(
+            (input.h_active, input.h_border, input.v_active),
+            (3856, 8, 2168)
+        );
 
         let try_mode = |m: &VideoMode, rate| {
             FrlCapacityInput::from_mode(
@@ -1329,5 +1393,18 @@ mod tests {
             AudioLoad::from_descriptor(&sad(AudioFormat::Lpcm, 2, Rates::empty())),
             AudioMapping::NoSampleRate
         );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn margin_deserializes_only_valid_fractions() {
+        let m: Margin = serde_json::from_str(r#"{"numer":2,"denom":4}"#).unwrap();
+        assert_eq!(m, Margin::new(1, 2)); // reduced, so == and cmp agree
+        assert!(serde_json::from_str::<Margin>(r#"{"numer":1,"denom":0}"#).is_err());
+        let huge = alloc::format!(r#"{{"numer":{},"denom":1}}"#, Margin::MARGIN_LIMIT + 1);
+        assert!(serde_json::from_str::<Margin>(&huge).is_err());
+        let round_trip: Margin =
+            serde_json::from_str(&serde_json::to_string(&Margin::new(-3, 7)).unwrap()).unwrap();
+        assert_eq!(round_trip, Margin::new(-3, 7));
     }
 }
