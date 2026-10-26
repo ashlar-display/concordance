@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking changes
+
+- **`ConstraintRule` takes a warning type: `ConstraintRule<V, W = Warning>`**, with a
+  provided `warnings` method, so rules can report non-fatal findings on candidates they
+  accept. Existing rules keep compiling (`W` defaults to the built-in `Warning`, and
+  `warnings` reports nothing by default). `Layered<E, R>` now requires
+  `R: ConstraintRule<E::Violation, E::Warning>`: a custom engine with its own warning
+  type, combined with a rule written for the built-in one, no longer composes; implement
+  the rule for that engine's warning type. `TaggingAdapter` and `Layered` forward warnings.
+- **The default engine rejects FRL rates too slow for the timing** (`FrlCapacityCheck`
+  in `DEFAULT_CHECKS`). Configurations accepted before can now be rejected.
+
 ### Added
 
 - **`frl` module: FRL capacity.** `frl_capacity` decides whether an HDMI 2.1 FRL rate can
@@ -26,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   data blocks and the basic audio flag; `alloc` only) and `frl_audio()`, and
   `SinkBuildWarning` gains `AudioDescriptorWithoutSampleRate`. In bare `no_std` builds a
   sink's audio is unknown; `frl_capacity` takes the caller's loads directly.
+- **`FrlCapacityCheck`** in the default rules: rejects with
+  `Violation::FrlCapacityExceeded` only when the timing fits under no reading; accepts
+  with `Warning::FrlCapacityMarginal` (naming the deciding assumptions) when it fits under
+  some, and with `Warning::FrlCapacityUnverified` when the capacity cannot be checked, or
+  not fully (no blanking or pixel clock, DSC, an unmodelled audio format, or no audio data
+  without alloc). `FrlUnverified` gains `UnmodelledAudio` and `AudioUnknown`. The
+  violation and the marginal warning carry the shortfall (and the deciding assumptions);
+  `FrlCapacityCheck::report` gives the full report for a candidate.
 
 ### Changed
 
@@ -45,6 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   move, verifies with `--owner DracoWhitefire --signer-repo DracoWhitefire/concordance`
   (see "Verifying releases" in the README). The code of conduct is now the organization's,
   shared by every Ashlar repository; the repository's own copy is removed.
+
+### Fixed
+
+- **The default engine reported no warnings.** It now collects them from its rules for
+  every accepted candidate (up to `MAX_WARNINGS` without alloc).
 
 ## [0.2.0] - 2026-10-18
 

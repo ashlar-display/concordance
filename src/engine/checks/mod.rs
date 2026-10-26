@@ -5,7 +5,7 @@ mod timing;
 
 pub use color::{BitDepthCheck, ColorEncodingCheck};
 pub use dsc::DscCheck;
-pub use frl::FrlCeilingCheck;
+pub use frl::{FrlCapacityCheck, FrlCeilingCheck};
 pub use timing::{PixelClockCheck, RefreshRateCheck, TmdsClockCheck};
 
 use crate::engine::rule::CheckList;
@@ -17,6 +17,7 @@ use crate::output::warning::Violation;
 /// collected; in no-alloc mode the engine short-circuits on the first failure.
 pub static DEFAULT_CHECKS: CheckList<Violation> = &[
     &FrlCeilingCheck,
+    &FrlCapacityCheck,
     &RefreshRateCheck,
     &PixelClockCheck,
     &TmdsClockCheck,

@@ -2,7 +2,7 @@
 
 use crate::diagnostic::Diagnostic;
 use crate::engine::CheckResult;
-use crate::output::warning::TaggedViolation;
+use crate::output::warning::{TaggedViolation, Warning};
 use crate::types::{CableCapabilities, CandidateConfig, SinkCapabilities, SourceCapabilities};
 
 #[cfg(any(feature = "alloc", feature = "std"))]
@@ -28,7 +28,11 @@ pub type CheckList<V> = &'static [&'static (dyn ConstraintRule<V> + Sync)];
 /// Custom rules sharing the built-in violation type can be injected via
 /// [`NegotiatorBuilder::with_extra_rule`][crate::NegotiatorBuilder::with_extra_rule]
 /// without replacing or reimplementing the default engine.
-pub trait ConstraintRule<V: Diagnostic> {
+///
+/// A rule may also report non-fatal findings on candidates it accepts, through
+/// [`warnings`][Self::warnings]. Their type `W` defaults to the built-in [`Warning`];
+/// a rule for a custom engine can use that engine's warning type instead.
+pub trait ConstraintRule<V: Diagnostic, W: Diagnostic = Warning> {
     /// A short, stable identifier for this rule.
     ///
     /// Used in [`ReasoningTrace`][crate::output::trace::ReasoningTrace] entries to
@@ -47,6 +51,21 @@ pub trait ConstraintRule<V: Diagnostic> {
         cable: &CableCapabilities,
         config: &CandidateConfig<'_>,
     ) -> Option<V>;
+
+    /// Reports non-fatal findings for a candidate, through `warn`.
+    ///
+    /// The engine calls it only for candidates no rule rejected. The default reports
+    /// nothing.
+    fn warnings(
+        &self,
+        sink: &SinkCapabilities,
+        source: &SourceCapabilities,
+        cable: &CableCapabilities,
+        config: &CandidateConfig<'_>,
+        warn: &mut dyn FnMut(W),
+    ) {
+        let _ = (sink, source, cable, config, warn);
+    }
 }
 
 /// Wraps a [`ConstraintRule<V>`] so it produces a [`ConstraintRule<TaggedViolation<V>>`],
@@ -57,10 +76,11 @@ pub trait ConstraintRule<V: Diagnostic> {
 /// a [`Layered`] engine by hand.
 pub struct TaggingAdapter<R>(pub R);
 
-impl<R, V> ConstraintRule<TaggedViolation<V>> for TaggingAdapter<R>
+impl<R, V, W> ConstraintRule<TaggedViolation<V>, W> for TaggingAdapter<R>
 where
-    R: ConstraintRule<V>,
+    R: ConstraintRule<V, W>,
     V: Diagnostic,
+    W: Diagnostic,
 {
     fn display_name(&self) -> &'static str {
         self.0.display_name()
@@ -79,6 +99,17 @@ where
                 rule: self.0.display_name(),
                 violation,
             })
+    }
+
+    fn warnings(
+        &self,
+        sink: &SinkCapabilities,
+        source: &SourceCapabilities,
+        cable: &CableCapabilities,
+        config: &CandidateConfig<'_>,
+        warn: &mut dyn FnMut(W),
+    ) {
+        self.0.warnings(sink, source, cable, config, warn);
     }
 }
 
@@ -109,15 +140,16 @@ impl<Base, Extra> Layered<Base, Extra> {
     }
 }
 
-/// `Layered<R1, R2>` is itself a `ConstraintRule<V>` when both components are.
+/// `Layered<R1, R2>` is itself a `ConstraintRule<V, W>` when both components are.
 ///
 /// Evaluates the base rule first; if it passes, evaluates the extra rule. Returns
-/// the first violation found, or `None` if both pass.
-impl<R1, R2, V> ConstraintRule<V> for Layered<R1, R2>
+/// the first violation found, or `None` if both pass. Warnings come from both.
+impl<R1, R2, V, W> ConstraintRule<V, W> for Layered<R1, R2>
 where
-    R1: ConstraintRule<V>,
-    R2: ConstraintRule<V>,
+    R1: ConstraintRule<V, W>,
+    R2: ConstraintRule<V, W>,
     V: Diagnostic,
+    W: Diagnostic,
 {
     fn display_name(&self) -> &'static str {
         "layered"
@@ -134,6 +166,18 @@ where
             .check(sink, source, cable, config)
             .or_else(|| self.extra.check(sink, source, cable, config))
     }
+
+    fn warnings(
+        &self,
+        sink: &SinkCapabilities,
+        source: &SourceCapabilities,
+        cable: &CableCapabilities,
+        config: &CandidateConfig<'_>,
+        warn: &mut dyn FnMut(W),
+    ) {
+        self.base.warnings(sink, source, cable, config, warn);
+        self.extra.warnings(sink, source, cable, config, warn);
+    }
 }
 
 /// `Layered<E, R>` is a `ConstraintEngine` when `E` is an engine and `R` is a rule
@@ -141,12 +185,13 @@ where
 ///
 /// Runs the base engine first, then the extra rule. With alloc, violations from
 /// both are collected. Without alloc, the base engine short-circuits on its first
-/// violation before the extra rule is reached; any warnings accumulated by the base
-/// are propagated through.
+/// violation before the extra rule is reached. When both accept, the base engine's
+/// warnings come first, then the extra rule's; without alloc, up to
+/// [`MAX_WARNINGS`][super::MAX_WARNINGS] in all.
 impl<E, R> super::ConstraintEngine for Layered<E, R>
 where
     E: super::ConstraintEngine,
-    R: ConstraintRule<E::Violation>,
+    R: ConstraintRule<E::Violation, E::Warning>,
 {
     type Warning = E::Warning;
     type Violation = E::Violation;
@@ -167,10 +212,12 @@ where
                     }
                     Err(violations)
                 }
-                Ok(warnings) => {
+                Ok(mut warnings) => {
                     if let Some(v) = self.extra.check(sink, source, cable, config) {
                         Err(vec![v])
                     } else {
+                        self.extra
+                            .warnings(sink, source, cable, config, &mut |w| warnings.push(w));
                         Ok(warnings)
                     }
                 }
@@ -178,10 +225,13 @@ where
         }
         #[cfg(not(any(feature = "alloc", feature = "std")))]
         {
-            let warnings = self.base.check(sink, source, cable, config)?;
+            let mut warnings = self.base.check(sink, source, cable, config)?;
             if let Some(v) = self.extra.check(sink, source, cable, config) {
                 return Err(v);
             }
+            self.extra.warnings(sink, source, cable, config, &mut |w| {
+                super::push_warning(&mut warnings, w)
+            });
             Ok(warnings)
         }
     }
@@ -193,6 +243,7 @@ mod tests {
     use crate::engine::{ConstraintEngine, DefaultConstraintEngine};
     use crate::output::warning::Violation;
     use crate::types::{CableCapabilities, CandidateConfig, SinkCapabilities, SourceCapabilities};
+    use alloc::vec::Vec;
     use display_types::cea861::HdmiForumFrl;
     use display_types::{ColorBitDepth, ColorFormat, VideoMode};
 
@@ -395,5 +446,120 @@ mod tests {
             violations[0].violation,
             Violation::ColorEncodingUnsupported
         ));
+    }
+
+    // --- warnings ---
+
+    /// Passes, and warns once with the built-in type.
+    struct WarnOnce;
+
+    impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for WarnOnce {
+        fn display_name(&self) -> &'static str {
+            "warn_once"
+        }
+        fn check(
+            &self,
+            _: &SinkCapabilities,
+            _: &SourceCapabilities,
+            _: &CableCapabilities,
+            _: &CandidateConfig<'_>,
+        ) -> Option<V> {
+            None
+        }
+        fn warnings(
+            &self,
+            _: &SinkCapabilities,
+            _: &SourceCapabilities,
+            _: &CableCapabilities,
+            _: &CandidateConfig<'_>,
+            warn: &mut dyn FnMut(Warning),
+        ) {
+            warn(Warning::CableBandwidthMarginal);
+        }
+    }
+
+    fn collect<R: ConstraintRule<V, W>, V: Diagnostic, W: Diagnostic>(rule: &R) -> Vec<W> {
+        let m = mode();
+        let mut out = Vec::new();
+        rule.warnings(&sink(), &source(), &cable(), &config(&m), &mut |w| {
+            out.push(w)
+        });
+        out
+    }
+
+    #[test]
+    fn rules_warn_nothing_by_default() {
+        assert!(collect::<_, Violation, Warning>(&AlwaysPass).is_empty());
+    }
+
+    #[test]
+    fn tagging_adapter_forwards_warnings() {
+        let w = collect::<_, TaggedViolation<Violation>, Warning>(&TaggingAdapter(WarnOnce));
+        assert!(matches!(w[..], [Warning::CableBandwidthMarginal]));
+    }
+
+    #[test]
+    fn layered_rule_forwards_both_warnings() {
+        let w = collect::<_, Violation, Warning>(&Layered::new(WarnOnce, WarnOnce));
+        assert_eq!(w.len(), 2);
+    }
+
+    #[test]
+    fn layered_engine_adds_the_extra_rules_warnings() {
+        // What `NegotiatorBuilder::with_extra_rule` builds: the default engine plus a
+        // tagged extra rule. The engine accepts, so the extra rule's warning comes through.
+        static NONE: CheckList<Violation> = &[];
+        let engine = Layered::new(
+            DefaultConstraintEngine::with_checks(NONE),
+            TaggingAdapter(WarnOnce),
+        );
+        let m = mode();
+        let w = engine
+            .check(&sink(), &source(), &cable(), &config(&m))
+            .unwrap();
+        assert!(matches!(w[..], [Warning::CableBandwidthMarginal]));
+    }
+
+    /// A custom warning type: rules for a custom engine keep full type fidelity.
+    #[derive(Debug, PartialEq)]
+    struct MyWarning;
+
+    impl core::fmt::Display for MyWarning {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.write_str("my warning")
+        }
+    }
+
+    struct MyRule;
+
+    impl ConstraintRule<Violation, MyWarning> for MyRule {
+        fn display_name(&self) -> &'static str {
+            "my_rule"
+        }
+        fn check(
+            &self,
+            _: &SinkCapabilities,
+            _: &SourceCapabilities,
+            _: &CableCapabilities,
+            _: &CandidateConfig<'_>,
+        ) -> Option<Violation> {
+            None
+        }
+        fn warnings(
+            &self,
+            _: &SinkCapabilities,
+            _: &SourceCapabilities,
+            _: &CableCapabilities,
+            _: &CandidateConfig<'_>,
+            warn: &mut dyn FnMut(MyWarning),
+        ) {
+            warn(MyWarning);
+        }
+    }
+
+    #[test]
+    fn custom_warning_types_compose() {
+        let w = collect::<_, Violation, MyWarning>(&Layered::new(MyRule, MyRule));
+        assert_eq!(w, [MyWarning, MyWarning]);
     }
 }

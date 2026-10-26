@@ -245,10 +245,10 @@ impl<'a> FrlAudio<'a> {
     }
 }
 
-/// Why a candidate's FRL capacity cannot be evaluated.
+/// Why a candidate's FRL capacity cannot be evaluated, or not fully.
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrlUnverified {
     /// The mode has no horizontal blanking ([`VideoMode::h_blank`] is `None`).
     NoBlanking,
@@ -264,6 +264,35 @@ pub enum FrlUnverified {
     /// The candidate uses Display Stream Compression, whose capacity computation is not
     /// implemented yet.
     Dsc,
+    /// The sink accepts an audio format whose packet load no public implementation
+    /// models, so the audio is bounded without it (see [`AudioMapping::Unmodelled`]).
+    UnmodelledAudio(AudioFormat),
+    /// The sink's audio is unknown: bare `no_std` builds carry no audio loads in
+    /// [`SinkCapabilities`][crate::SinkCapabilities], so the video was checked without
+    /// audio (see [`FrlAudio`]).
+    AudioUnknown,
+}
+
+impl core::fmt::Display for FrlUnverified {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoBlanking => f.write_str("the mode has no horizontal blanking"),
+            Self::NoPixelClock => f.write_str("the mode has no exact pixel clock"),
+            Self::Tmds => f.write_str("the candidate uses TMDS"),
+            Self::UnknownRate => f.write_str("the FRL rate is unknown to the computation"),
+            Self::UnsupportedEncoding => {
+                f.write_str("the colour format is unknown to the computation")
+            }
+            Self::Dsc => f.write_str("DSC capacity is not computed yet"),
+            Self::UnmodelledAudio(format) => {
+                write!(
+                    f,
+                    "audio format {format:?} has no packet model and is not counted"
+                )
+            }
+            Self::AudioUnknown => f.write_str("the sink's audio is unknown (no alloc)"),
+        }
+    }
 }
 
 /// The input to one FRL capacity evaluation.
@@ -463,6 +492,27 @@ impl PartialOrd for Margin {
 impl Ord for Margin {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         (self.numer * other.denom as i128).cmp(&(other.numer * self.denom as i128))
+    }
+}
+
+impl core::fmt::Display for FrlShortfall {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::AudioBlanking { needed, available } => write!(
+                f,
+                "blanking holds {available} tribytes, the audio needs {needed}"
+            ),
+            Self::Borrow => f.write_str("the blanking is too short to lend the active video time"),
+            Self::BorrowLimit { borrowed, limit } => write!(
+                f,
+                "the active video would borrow {borrowed} tribytes, over the limit of {limit}"
+            ),
+            Self::Utilisation { margin } => write!(
+                f,
+                "the line's characters exceed its capacity (margin {} ppm)",
+                margin.ppm()
+            ),
+        }
     }
 }
 

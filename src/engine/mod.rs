@@ -23,6 +23,15 @@ pub use rule::{CheckList, ConstraintRule};
 /// if more capacity is needed during debugging.
 pub const MAX_WARNINGS: usize = 8;
 
+/// Stores `w` in the first free slot of a no-alloc warning list; beyond
+/// [`MAX_WARNINGS`] it is dropped, as documented there.
+#[cfg(not(any(feature = "alloc", feature = "std")))]
+pub(crate) fn push_warning<W>(warnings: &mut [Option<W>; MAX_WARNINGS], w: W) {
+    if let Some(slot) = warnings.iter_mut().find(|s| s.is_none()) {
+        *slot = Some(w);
+    }
+}
+
 /// The result of a constraint check.
 ///
 /// - **alloc/std**: `Result<Vec<W>, Vec<V>>` — all warnings on success, all violations on failure.
@@ -207,7 +216,11 @@ impl<V: Diagnostic> ConstraintEngine for DefaultConstraintEngine<V> {
                 }
             }
             if violations.is_empty() {
-                Ok(Vec::new())
+                let mut warnings = Vec::new();
+                for rule in self.checks {
+                    rule.warnings(sink, source, cable, config, &mut |w| warnings.push(w));
+                }
+                Ok(warnings)
             } else {
                 Err(violations)
             }
@@ -222,7 +235,13 @@ impl<V: Diagnostic> ConstraintEngine for DefaultConstraintEngine<V> {
                     });
                 }
             }
-            Ok(Default::default())
+            let mut warnings: [Option<Self::Warning>; MAX_WARNINGS] = Default::default();
+            for rule in self.checks {
+                rule.warnings(sink, source, cable, config, &mut |w| {
+                    push_warning(&mut warnings, w)
+                });
+            }
+            Ok(warnings)
         }
     }
 }

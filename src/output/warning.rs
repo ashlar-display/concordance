@@ -96,6 +96,33 @@ pub enum Warning {
     /// Cable bandwidth is marginal for the selected mode and may degrade under load.
     #[error("cable bandwidth marginal for selected mode")]
     CableBandwidthMarginal,
+
+    /// The FRL rate carries the timing under some readings of the public capacity
+    /// computation and not under others; `deciding` names the assumptions that decide.
+    ///
+    /// The full report, with every intermediate value, is
+    /// [`FrlCapacityCheck::report`][crate::engine::checks::FrlCapacityCheck::report].
+    #[error(
+        "FRL rate {rate:?} is marginal for this timing: {shortfall} under the strict reading (deciding: {deciding:?})"
+    )]
+    FrlCapacityMarginal {
+        /// The candidate's FRL rate.
+        rate: display_types::cea861::HdmiForumFrl,
+        /// The assumptions that decide whether it fits.
+        deciding: crate::frl::Assumptions,
+        /// What the strict evaluation fails on.
+        shortfall: crate::frl::FrlShortfall,
+    },
+
+    /// The FRL capacity could not be checked, or not fully: the candidate is accepted
+    /// without that check.
+    #[error("FRL capacity at {rate:?} not verified: {reason}")]
+    FrlCapacityUnverified {
+        /// The candidate's FRL rate.
+        rate: display_types::cea861::HdmiForumFrl,
+        /// What is missing.
+        reason: crate::frl::FrlUnverified,
+    },
 }
 
 /// A constraint violation produced when a candidate configuration is rejected.
@@ -168,6 +195,19 @@ pub enum Violation {
         min_hz: u16,
         /// Maximum declared by the sink in Hz.
         max_hz: u16,
+    },
+
+    /// The FRL rate cannot carry the timing under any reading of the public capacity
+    /// computation (see [`frl`][crate::frl]).
+    ///
+    /// The full report, with every intermediate value, is
+    /// [`FrlCapacityCheck::report`][crate::engine::checks::FrlCapacityCheck::report].
+    #[error("FRL rate {rate:?} cannot carry the timing: {shortfall}")]
+    FrlCapacityExceeded {
+        /// The candidate's FRL rate.
+        rate: display_types::cea861::HdmiForumFrl,
+        /// The condition the strict evaluation failed.
+        shortfall: crate::frl::FrlShortfall,
     },
 }
 

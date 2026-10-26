@@ -482,6 +482,82 @@ mod tests {
         }
     }
 
+    /// The FRL capacity check takes part in negotiation: 3840×2160 @ 60 Hz RGB 12-bit no
+    /// longer passes at FRL rates too slow to carry it; the slowest it is offered at is
+    /// 6 Gbps × 4 lanes.
+    #[test]
+    fn negotiation_rejects_frl_rates_too_slow_for_the_timing() {
+        use crate::frl::FrlShortfall;
+        use display_types::cea861::{HdmiForumFrl, HdmiForumSinkCap, vic_to_mode};
+        use display_types::{ColorBitDepth, ColorFormat};
+
+        let mode = vic_to_mode(97).unwrap();
+        let mut sink = rgb8_sink();
+        sink.color_capabilities.rgb444 = ColorBitDepths::BPC_8.with(ColorBitDepth::Depth12);
+        sink.hdmi_forum = Some(HdmiForumSinkCap::new(
+            1,
+            600,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            HdmiForumFrl::Rate12Gbps4Lanes,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            None,
+            None,
+            None,
+        ));
+        let source = SourceCapabilities::new(600_000, HdmiForumFrl::Rate12Gbps4Lanes, None);
+        let cable = CableCapabilities::unconstrained();
+        let (accepted, rejected) = NegotiatorBuilder::default()
+            .with_enumerator(SliceEnumerator::new(core::slice::from_ref(&mode)))
+            .negotiate_with_log(&sink, &source, &cable);
+
+        let rgb12_rates: Vec<HdmiForumFrl> = accepted
+            .iter()
+            .filter(|c| {
+                c.resolved.color_encoding == ColorFormat::Rgb444
+                    && c.resolved.bit_depth == ColorBitDepth::Depth12
+            })
+            .map(|c| c.resolved.frl_rate)
+            .collect();
+        assert!(!rgb12_rates.is_empty());
+        assert!(!rgb12_rates.contains(&HdmiForumFrl::Rate3Gbps3Lanes));
+        assert!(!rgb12_rates.contains(&HdmiForumFrl::Rate6Gbps3Lanes));
+        assert!(rgb12_rates.contains(&HdmiForumFrl::Rate6Gbps4Lanes));
+
+        // The rejected candidates say why.
+        let capacity_rejections = rejected
+            .iter()
+            .flat_map(|r| r.violations.iter())
+            .filter(|v| {
+                v.rule == "frl_capacity"
+                    && matches!(
+                        v.violation,
+                        Violation::FrlCapacityExceeded {
+                            shortfall: FrlShortfall::Borrow | FrlShortfall::BorrowLimit { .. },
+                            ..
+                        }
+                    )
+            })
+            .count();
+        assert!(capacity_rejections >= 2);
+    }
+
     /// `negotiate` (without log) produces the same accepted set as `negotiate_with_log`.
     #[test]
     fn negotiate_and_negotiate_with_log_agree_on_accepted() {
