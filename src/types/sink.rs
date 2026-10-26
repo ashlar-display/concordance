@@ -124,32 +124,41 @@ pub struct SinkCapabilities {
     /// Colorimetry standards supported.
     pub colorimetry: Option<ColorimetryBlock>,
 
-    /// The heaviest audio load a source may send for each format the sink accepts: one per
-    /// Short Audio Descriptor (CTA Audio Data Block and HDMI Audio Data Block), mapped by
-    /// [`AudioLoad::from_descriptor`][crate::frl::AudioLoad::from_descriptor], plus
-    /// [`AudioLoad::BASIC`][crate::frl::AudioLoad::BASIC] when the sink declares basic audio.
-    /// Empty when the sink accepts no audio. The FRL capacity check bounds the audio with
-    /// these ([`frl_audio`][Self::frl_audio]).
+    /// The heaviest audio load a source may send for each format the sink accepts, or
+    /// `None` when the sink's audio is unknown.
     ///
-    /// Absent in bare `no_std` builds: there the sink's audio is unknown, and FRL
+    /// [`sink_capabilities_from_display`] always fills it: one load per Short Audio
+    /// Descriptor of the CTA Audio Data Block, mapped by
+    /// [`AudioLoad::from_descriptor`][crate::frl::AudioLoad::from_descriptor], plus
+    /// [`AudioLoad::BASIC`][crate::frl::AudioLoad::BASIC] when the sink declares basic audio;
+    /// `Some` and empty when it declares no audio. A sink built by hand starts with `None`
+    /// (from `Default`, and when deserializing data without the field), which the FRL
+    /// capacity check reports as unknown audio rather than counting none.
+    ///
+    /// Absent in bare `no_std` builds: there the sink's audio is always unknown, and FRL
     /// candidates are reported unverified for audio (see [`FrlAudio`][crate::frl::FrlAudio]).
     #[cfg(any(feature = "alloc", feature = "std"))]
-    pub audio_loads: Vec<crate::frl::AudioLoad>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub audio_loads: Option<Vec<crate::frl::AudioLoad>>,
 
-    /// Audio formats the sink accepts whose packet load no public implementation models
-    /// (DST, extended and reserved codes); they cannot be bounded. Absent in bare `no_std`
+    /// Audio the sink accepts whose packet load no public implementation models: One Bit
+    /// Audio, DST, extended and reserved formats, HDMI Multi-Stream Audio and HDMI 3D Audio.
+    /// It cannot be bounded; the FRL capacity check reports it. Absent in bare `no_std`
     /// builds.
     #[cfg(any(feature = "alloc", feature = "std"))]
-    pub unmodelled_audio: Vec<display_types::cea861::AudioFormat>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub unmodelled_audio: Vec<crate::frl::UnmodelledAudio>,
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 impl SinkCapabilities {
     /// The sink's audio as a bound for the FRL capacity computation:
     /// [`FrlAudio::AtMost`][crate::frl::FrlAudio::AtMost] over
-    /// [`audio_loads`][Self::audio_loads].
-    pub fn frl_audio(&self) -> crate::frl::FrlAudio<'_> {
-        crate::frl::FrlAudio::AtMost(&self.audio_loads)
+    /// [`audio_loads`][Self::audio_loads], or `None` when the audio is unknown.
+    pub fn frl_audio(&self) -> Option<crate::frl::FrlAudio<'_>> {
+        self.audio_loads
+            .as_deref()
+            .map(crate::frl::FrlAudio::AtMost)
     }
 }
 
@@ -230,31 +239,45 @@ pub fn sink_capabilities_from_display(
         warnings.push(SinkBuildWarning::DuplicateModes(duplicates));
     }
 
-    // Audio: every descriptor from the CTA and HDMI Audio Data Blocks, and basic audio.
+    // Audio: every descriptor of the CTA Audio Data Block, and basic audio. The HDMI Audio
+    // Data Block's multi-stream and 3D audio have no packet model: reported, not mapped.
+    // Without a CTA extension the sink declares no audio (`Some`, empty).
+    use crate::frl::{AudioLoad, AudioMapping, UnmodelledAudio};
     let mut audio_loads = Vec::new();
     let mut unmodelled_audio = Vec::new();
     if let Some(c) = cea {
         if c.flags
             .contains(display_types::cea861::Cea861Flags::BASIC_AUDIO)
         {
-            audio_loads.push(crate::frl::AudioLoad::BASIC);
+            audio_loads.push(AudioLoad::BASIC);
         }
-        let hdmi_audio = c.hdmi_audio.iter().flat_map(|b| b.audio_descriptors.iter());
-        for sad in c.audio_descriptors.iter().chain(hdmi_audio) {
-            match crate::frl::AudioLoad::from_descriptor(sad) {
-                crate::frl::AudioMapping::Load(load) => {
+        for sad in &c.audio_descriptors {
+            match AudioLoad::from_descriptor(sad) {
+                AudioMapping::Load(load) => {
                     if !audio_loads.contains(&load) {
                         audio_loads.push(load);
                     }
                 }
-                crate::frl::AudioMapping::Unmodelled(format) => {
-                    if !unmodelled_audio.contains(&format) {
-                        unmodelled_audio.push(format);
+                AudioMapping::Unmodelled(audio) => {
+                    if !unmodelled_audio.contains(&audio) {
+                        unmodelled_audio.push(audio);
                     }
                 }
-                _ => warnings.push(SinkBuildWarning::AudioDescriptorWithoutSampleRate(
-                    sad.clone(),
-                )),
+                AudioMapping::NoSampleRate => warnings.push(
+                    SinkBuildWarning::AudioDescriptorWithoutSampleRate(sad.clone()),
+                ),
+            }
+        }
+        if let Some(b) = &c.hdmi_audio {
+            if b.multi_stream() {
+                unmodelled_audio.push(UnmodelledAudio::MultiStream {
+                    max_streams: b.max_streams,
+                });
+            }
+            if !b.audio_3d_descriptors.is_empty() {
+                unmodelled_audio.push(UnmodelledAudio::Audio3d {
+                    descriptors: u8::try_from(b.audio_3d_descriptors.len()).unwrap_or(u8::MAX),
+                });
             }
         }
     }
@@ -272,7 +295,7 @@ pub fn sink_capabilities_from_display(
             hdmi_forum: cea.and_then(|c| c.hf_scdb.clone().or_else(|| c.hf_vsdb.clone())),
             hdr_static: cea.and_then(|c| c.hdr_static_metadata.clone()),
             colorimetry: cea.and_then(|c| c.colorimetry),
-            audio_loads,
+            audio_loads: Some(audio_loads),
             unmodelled_audio,
         },
         warnings,
@@ -607,8 +630,8 @@ mod tests {
     }
 
     #[test]
-    fn audio_loads_from_both_audio_blocks_and_basic_audio() {
-        use crate::frl::{AudioLoad, AudioPacketType, FrlAudio};
+    fn audio_loads_from_the_audio_data_block_and_basic_audio() {
+        use crate::frl::{AudioLoad, AudioPacketType, FrlAudio, UnmodelledAudio};
         use display_types::cea861::{
             AudioFormat, AudioFormatInfo, AudioSampleRates as Rates, HdmiAudioBlock,
             ShortAudioDescriptor,
@@ -623,22 +646,35 @@ mod tests {
             sad(AudioFormat::Lpcm, 2, Rates::HZ_48000), // same load as basic audio
             sad(AudioFormat::Dst, 6, Rates::HZ_44100),
             sad(AudioFormat::Ac3, 6, Rates::empty()),
+            sad(AudioFormat::MlpTrueHd, 8, Rates::empty()), // HBR whatever the rate
         ]);
+        // Multi-stream and 3D audio: no packet model, reported rather than mapped.
         cea.hdmi_audio = Some(HdmiAudioBlock::new(
+            2,
             false,
-            Vec::from([sad(AudioFormat::MlpTrueHd, 8, Rates::HZ_48000)]),
+            Vec::from([sad(AudioFormat::Lpcm, 10, Rates::HZ_48000)]),
+            None,
         ));
         with_cea(&mut caps, cea);
         let (sink, warnings) = sink_capabilities_from_display(&caps);
         assert_eq!(
-            sink.audio_loads,
+            sink.audio_loads.as_deref(),
+            Some(
+                &[
+                    AudioLoad::BASIC,
+                    AudioLoad::new(AudioPacketType::Sample, 192_000, 8),
+                    AudioLoad::new(AudioPacketType::HighBitRate, 192_000, 8),
+                ][..]
+            )
+        );
+        assert_eq!(
+            sink.unmodelled_audio,
             [
-                AudioLoad::BASIC,
-                AudioLoad::new(AudioPacketType::Sample, 192_000, 8),
-                AudioLoad::new(AudioPacketType::HighBitRate, 192_000, 8),
+                UnmodelledAudio::Format(AudioFormat::Dst),
+                UnmodelledAudio::MultiStream { max_streams: 2 },
+                UnmodelledAudio::Audio3d { descriptors: 1 },
             ]
         );
-        assert_eq!(sink.unmodelled_audio, [AudioFormat::Dst]);
         assert_eq!(
             warnings,
             [SinkBuildWarning::AudioDescriptorWithoutSampleRate(sad(
@@ -647,13 +683,34 @@ mod tests {
                 Rates::empty()
             ))]
         );
-        assert_eq!(sink.frl_audio(), FrlAudio::AtMost(&sink.audio_loads));
+        assert_eq!(
+            sink.frl_audio(),
+            Some(FrlAudio::AtMost(sink.audio_loads.as_deref().unwrap()))
+        );
     }
 
     #[test]
     fn no_cta_block_means_no_audio() {
         let (sink, _) = sink_capabilities_from_display(&DisplayCapabilities::default());
-        assert!(sink.audio_loads.is_empty());
+        assert_eq!(sink.audio_loads.as_deref(), Some(&[][..]));
         assert!(sink.unmodelled_audio.is_empty());
+    }
+
+    #[test]
+    fn a_hand_built_sink_has_unknown_audio() {
+        let sink = SinkCapabilities::default();
+        assert_eq!(sink.audio_loads, None);
+        assert_eq!(sink.frl_audio(), None);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn sink_without_audio_fields_deserializes_as_unknown_audio() {
+        let mut json = serde_json::to_value(SinkCapabilities::default()).unwrap();
+        let fields = json.as_object_mut().unwrap();
+        fields.remove("audio_loads");
+        fields.remove("unmodelled_audio");
+        let sink: SinkCapabilities = serde_json::from_value(json).unwrap();
+        assert_eq!(sink.audio_loads, None);
     }
 }

@@ -33,11 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Audio for the FRL capacity check.** `FrlAudio` borrows the audio loads to count (none,
   a bound such as the sink's, or what the source may send); `AudioLoad::from_descriptor`
   maps a Short Audio Descriptor to the heaviest load a source may send for it (IEC 61937
-  rates: E-AC-3 at four times the declared rate, TrueHD and DTS-HD as High Bit Rate
-  audio). `SinkCapabilities` gains `audio_loads` and `unmodelled_audio` (from both audio
-  data blocks and the basic audio flag; `alloc` only) and `frl_audio()`, and
-  `SinkBuildWarning` gains `AudioDescriptorWithoutSampleRate`. In bare `no_std` builds a
-  sink's audio is unknown; `frl_capacity` takes the caller's loads directly.
+  rates: E-AC-3 at four times the declared rate, as High Bit Rate audio above 192 kHz;
+  TrueHD and DTS-HD as High Bit Rate audio whatever the declared rate). One Bit Audio,
+  DST, extended and reserved formats have no corroborated packet model and are
+  `UnmodelledAudio`, as are HDMI Multi-Stream Audio and HDMI 3D Audio. `SinkCapabilities`
+  gains `audio_loads: Option<Vec<AudioLoad>>` (`None` = unknown, the default and what
+  deserializing older data gives; `sink_capabilities_from_display` fills it from the CTA
+  Audio Data Block and the basic audio flag), `unmodelled_audio`, and `frl_audio()`
+  (alloc only); `SinkBuildWarning` gains `AudioDescriptorWithoutSampleRate`. Unknown audio
+  (`None`, or a bare `no_std` build) is reported as `FrlUnverified::AudioUnknown`, never
+  counted as none; `frl_capacity` takes a caller's own loads directly.
 - **`FrlCapacityCheck`** in the default rules: rejects with
   `Violation::FrlCapacityExceeded` only when the timing fits under no reading; accepts
   with `Warning::FrlCapacityMarginal` (naming the deciding assumptions) when it fits under

@@ -2,9 +2,9 @@ use display_types::cea861::HdmiForumFrl;
 
 use crate::diagnostic::Diagnostic;
 use crate::engine::rule::ConstraintRule;
-#[cfg(not(any(feature = "alloc", feature = "std")))]
-use crate::frl::FrlAudio;
-use crate::frl::{FrlCapacityInput, FrlCapacityReport, FrlUnverified, FrlVerdict, frl_capacity};
+use crate::frl::{
+    FrlAudio, FrlCapacityInput, FrlCapacityReport, FrlUnverified, FrlVerdict, frl_capacity,
+};
 use crate::output::warning::{Violation, Warning};
 use crate::types::{CableCapabilities, CandidateConfig, SinkCapabilities, SourceCapabilities};
 
@@ -115,6 +115,17 @@ impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for FrlCeilingCheck {
 pub struct FrlCapacityCheck;
 
 impl FrlCapacityCheck {
+    /// The sink's audio bound, or `None` when it is unknown.
+    fn sink_audio(sink: &SinkCapabilities) -> Option<FrlAudio<'_>> {
+        #[cfg(any(feature = "alloc", feature = "std"))]
+        return sink.frl_audio();
+        #[cfg(not(any(feature = "alloc", feature = "std")))]
+        {
+            let _ = sink;
+            None
+        }
+    }
+
     /// The capacity report this rule bases its outcome on, with every intermediate
     /// value: `None` for TMDS candidates, `Err` when the capacity cannot be checked.
     ///
@@ -131,13 +142,9 @@ impl FrlCapacityCheck {
         if config.dsc_enabled {
             return Some(Err(FrlUnverified::Dsc));
         }
-        #[cfg(any(feature = "alloc", feature = "std"))]
-        let audio = sink.frl_audio();
-        #[cfg(not(any(feature = "alloc", feature = "std")))]
-        let audio = {
-            let _ = sink;
-            FrlAudio::None
-        };
+        // Unknown audio (`None`, or no alloc): the video is checked without audio, and
+        // `warnings` reports it.
+        let audio = Self::sink_audio(sink).unwrap_or(FrlAudio::None);
         Some(
             FrlCapacityInput::from_mode(
                 config.mode,
@@ -194,18 +201,19 @@ impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for FrlCapacityCheck {
             }
             Some(Ok(report)) => report,
         };
-        #[cfg(any(feature = "alloc", feature = "std"))]
-        for &format in &sink.unmodelled_audio {
+        if Self::sink_audio(sink).is_none() {
             warn(Warning::FrlCapacityUnverified {
                 rate,
-                reason: FrlUnverified::UnmodelledAudio(format),
+                reason: FrlUnverified::AudioUnknown,
             });
         }
-        #[cfg(not(any(feature = "alloc", feature = "std")))]
-        warn(Warning::FrlCapacityUnverified {
-            rate,
-            reason: FrlUnverified::AudioUnknown,
-        });
+        #[cfg(any(feature = "alloc", feature = "std"))]
+        for &audio in &sink.unmodelled_audio {
+            warn(Warning::FrlCapacityUnverified {
+                rate,
+                reason: FrlUnverified::UnmodelledAudio(audio),
+            });
+        }
         if let (FrlVerdict::Marginal, Err(shortfall)) = (report.verdict(), report.strict.result) {
             warn(Warning::FrlCapacityMarginal {
                 rate,
@@ -621,7 +629,7 @@ mod tests {
 mod capacity_tests {
     use super::*;
     use crate::engine::{ConstraintEngine, DefaultConstraintEngine};
-    use crate::frl::{Assumptions, AudioLoad, AudioPacketType, FrlShortfall};
+    use crate::frl::{Assumptions, AudioLoad, AudioPacketType, FrlShortfall, UnmodelledAudio};
     use crate::output::warning::TaggedViolation;
     use alloc::vec::Vec;
     use display_types::cea861::vic_to_mode;
@@ -650,6 +658,14 @@ mod capacity_tests {
         out
     }
 
+    /// A sink known to declare no audio (`audio_loads: Some(empty)`).
+    fn no_audio_sink() -> SinkCapabilities {
+        SinkCapabilities {
+            audio_loads: Some(Vec::new()),
+            ..Default::default()
+        }
+    }
+
     fn rgb(mode: &VideoMode, depth: ColorBitDepth, rate: HdmiForumFrl) -> CandidateConfig<'_> {
         CandidateConfig::new(mode, ColorFormat::Rgb444, depth, rate, false)
     }
@@ -658,7 +674,7 @@ mod capacity_tests {
     fn rejects_a_rate_too_slow_for_the_timing() {
         // 3840×2160 @ 60 Hz RGB 12-bit at 3 Gbps × 3: the walkthrough's old top config.
         let mode = vic_to_mode(97).unwrap();
-        let sink = SinkCapabilities::default();
+        let sink = no_audio_sink();
         let v = rule_check(
             &sink,
             &rgb(&mode, ColorBitDepth::Depth12, HdmiForumFrl::Rate3Gbps3Lanes),
@@ -684,7 +700,7 @@ mod capacity_tests {
         let mode = VideoMode::new(1920, 1080, 120u32, false)
             .with_pixel_clock(289_109)
             .with_h_blank(280);
-        let sink = SinkCapabilities::default();
+        let sink = no_audio_sink();
         let config = rgb(&mode, ColorBitDepth::Depth10, HdmiForumFrl::Rate3Gbps3Lanes);
         assert!(rule_check(&sink, &config).is_none());
         let w = rule_warnings(&sink, &config);
@@ -705,10 +721,14 @@ mod capacity_tests {
         let mode = VideoMode::new(3840, 2160, 120u32, false)
             .with_pixel_clock(533_250)
             .with_h_blank(95);
-        let mut sink = SinkCapabilities::default();
+        let mut sink = no_audio_sink();
         let config = rgb(&mode, ColorBitDepth::Depth8, HdmiForumFrl::Rate12Gbps4Lanes);
         assert!(rule_warnings(&sink, &config).is_empty());
-        sink.audio_loads = Vec::from([AudioLoad::new(AudioPacketType::Sample, 192_000, 8)]);
+        sink.audio_loads = Some(Vec::from([AudioLoad::new(
+            AudioPacketType::Sample,
+            192_000,
+            8,
+        )]));
         let w = rule_warnings(&sink, &config);
         assert!(matches!(
             w[..],
@@ -759,17 +779,48 @@ mod capacity_tests {
     fn unmodelled_audio_is_reported() {
         let mode = vic_to_mode(97).unwrap();
         let sink = SinkCapabilities {
-            unmodelled_audio: Vec::from([display_types::cea861::AudioFormat::Dst]),
-            ..Default::default()
+            unmodelled_audio: Vec::from([
+                UnmodelledAudio::Format(display_types::cea861::AudioFormat::Dst),
+                UnmodelledAudio::MultiStream { max_streams: 2 },
+            ]),
+            ..no_audio_sink()
         };
         let config = rgb(&mode, ColorBitDepth::Depth8, HdmiForumFrl::Rate12Gbps4Lanes);
         assert!(matches!(
             rule_warnings(&sink, &config)[..],
+            [
+                Warning::FrlCapacityUnverified {
+                    reason: FrlUnverified::UnmodelledAudio(UnmodelledAudio::Format(
+                        display_types::cea861::AudioFormat::Dst
+                    )),
+                    ..
+                },
+                Warning::FrlCapacityUnverified {
+                    reason: FrlUnverified::UnmodelledAudio(UnmodelledAudio::MultiStream {
+                        max_streams: 2
+                    }),
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[test]
+    fn unknown_sink_audio_is_reported_and_the_video_still_checked() {
+        // A hand-built sink (audio_loads None): no silent "no audio".
+        let mode = vic_to_mode(97).unwrap();
+        let sink = SinkCapabilities::default();
+        let ok = rgb(&mode, ColorBitDepth::Depth8, HdmiForumFrl::Rate12Gbps4Lanes);
+        assert!(matches!(
+            rule_warnings(&sink, &ok)[..],
             [Warning::FrlCapacityUnverified {
-                reason: FrlUnverified::UnmodelledAudio(display_types::cea861::AudioFormat::Dst),
+                reason: FrlUnverified::AudioUnknown,
                 ..
             }]
         ));
+        // The video is still checked: a rate too slow is still rejected.
+        let slow = rgb(&mode, ColorBitDepth::Depth12, HdmiForumFrl::Rate3Gbps3Lanes);
+        assert!(rule_check(&sink, &slow).is_some());
     }
 
     #[test]
@@ -778,7 +829,7 @@ mod capacity_tests {
             .with_pixel_clock(289_109)
             .with_h_blank(280);
         // No HDMI Forum block: the FRL ceiling check rejects, and no warnings come.
-        let sink = SinkCapabilities::default();
+        let sink = no_audio_sink();
         let config = rgb(&mode, ColorBitDepth::Depth10, HdmiForumFrl::Rate3Gbps3Lanes);
         let engine = DefaultConstraintEngine::default();
         let source = SourceCapabilities::default();

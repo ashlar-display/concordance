@@ -100,8 +100,6 @@ pub enum AudioPacketType {
     /// Audio Sample Packet (L-PCM and compressed audio at up to 192 kHz): one packet per
     /// four samples with up to two channels (layout 0), one per sample with more (layout 1).
     Sample,
-    /// One Bit Audio Sample Packet: one packet per four samples.
-    OneBitSample,
     /// High Bit Rate Audio Stream Packet: one packet per sample.
     HighBitRate,
 }
@@ -136,43 +134,61 @@ impl AudioLoad {
     /// The heaviest load a source may send for a Short Audio Descriptor.
     ///
     /// Compressed formats travel as IEC 61937 bursts, whose rate depends on the format
-    /// (as in FFmpeg's IEC 61937 muxer, `libavformat/spdifenc.c`). Where the descriptor
-    /// does not say which variant the source sends, the heavier one is taken:
+    /// (FFmpeg's IEC 61937 muxer, `libavformat/spdifenc.c`, for AC-3, E-AC-3, MPEG, AAC,
+    /// DTS and TrueHD). Where the descriptor does not say which variant the source sends,
+    /// the heavier one is taken:
     ///
     /// | Format | Load |
     /// |---|---|
     /// | L-PCM | sample packets, the declared channels, the highest declared rate |
-    /// | AC-3, MPEG-1, MP3, MPEG-2 multichannel, AAC LC, DTS, ATRAC, WMA Pro | sample packets, 2 channels, the highest declared rate |
-    /// | Enhanced AC-3 | sample packets, 2 channels, 4 × the highest declared rate |
-    /// | DTS-HD, MLP/Dolby TrueHD | High Bit Rate packets at 192 kHz (768 kHz on the link: MAT and DTS-HD Master Audio) |
-    /// | One Bit Audio | one-bit sample packets, the declared channels, the highest declared rate |
-    /// | DST, extended and reserved codes | [`AudioMapping::Unmodelled`]: no public implementation models them |
+    /// | AC-3, MPEG-1, MP3, MPEG-2 multichannel, AAC LC, DTS, ATRAC, WMA Pro | sample packets, 2 channels, the highest declared rate (IEC 61937 at the audio rate; ATRAC and WMA Pro by the same rule, not in FFmpeg's muxer) |
+    /// | Enhanced AC-3 | 2 channels at 4 × the highest declared rate: sample packets up to 192 kHz, High Bit Rate packets above (amdgpu switches above 192 kHz) |
+    /// | DTS-HD, MLP/Dolby TrueHD | High Bit Rate packets at 192 kHz (768 kHz on the link: MAT and DTS-HD Master Audio), whatever the declared rate |
+    /// | One Bit Audio, DST, extended and reserved codes | [`AudioMapping::Unmodelled`] |
     ///
-    /// A descriptor with no sample rate set is [`AudioMapping::NoSampleRate`].
+    /// One Bit Audio and DST are not modelled: amdgpu refuses One Bit Audio sample packets
+    /// and counts DST packets at a quarter packet per sample, a single source no other
+    /// implementation corroborates; FFmpeg's muxer and i915 have neither. A descriptor of
+    /// a modelled format other than DTS-HD and TrueHD with no sample rate set is
+    /// [`AudioMapping::NoSampleRate`].
     pub fn from_descriptor(sad: &ShortAudioDescriptor) -> AudioMapping {
-        let Some(rate) = highest_rate(sad.sample_rates) else {
-            return AudioMapping::NoSampleRate;
-        };
-        let sample = |channels| AudioLoad::new(AudioPacketType::Sample, rate, channels);
-        AudioMapping::Load(match sad.format {
-            AudioFormat::Lpcm => sample(sad.max_channels),
-            AudioFormat::Ac3
-            | AudioFormat::Mpeg1
-            | AudioFormat::Mp3
-            | AudioFormat::Mpeg2Multichannel
-            | AudioFormat::AacLc
-            | AudioFormat::Dts
-            | AudioFormat::Atrac
-            | AudioFormat::WmaPro => sample(2),
-            AudioFormat::EnhancedAc3 => AudioLoad::new(AudioPacketType::Sample, 4 * rate, 2),
-            AudioFormat::DtsHd | AudioFormat::MlpTrueHd => {
+        let sample = |rate, channels| AudioLoad::new(AudioPacketType::Sample, rate, channels);
+        let load = match (sad.format, highest_rate(sad.sample_rates)) {
+            (AudioFormat::DtsHd | AudioFormat::MlpTrueHd, _) => {
                 AudioLoad::new(AudioPacketType::HighBitRate, 192_000, sad.max_channels)
             }
-            AudioFormat::OneBitAudio => {
-                AudioLoad::new(AudioPacketType::OneBitSample, rate, sad.max_channels)
+            (AudioFormat::Lpcm, Some(rate)) => sample(rate, sad.max_channels),
+            (
+                AudioFormat::Ac3
+                | AudioFormat::Mpeg1
+                | AudioFormat::Mp3
+                | AudioFormat::Mpeg2Multichannel
+                | AudioFormat::AacLc
+                | AudioFormat::Dts
+                | AudioFormat::Atrac
+                | AudioFormat::WmaPro,
+                Some(rate),
+            ) => sample(rate, 2),
+            (AudioFormat::EnhancedAc3, Some(rate)) if 4 * rate <= 192_000 => sample(4 * rate, 2),
+            (AudioFormat::EnhancedAc3, Some(rate)) => {
+                AudioLoad::new(AudioPacketType::HighBitRate, rate, 2)
             }
-            other => return AudioMapping::Unmodelled(other),
-        })
+            (
+                AudioFormat::Lpcm
+                | AudioFormat::Ac3
+                | AudioFormat::Mpeg1
+                | AudioFormat::Mp3
+                | AudioFormat::Mpeg2Multichannel
+                | AudioFormat::AacLc
+                | AudioFormat::Dts
+                | AudioFormat::Atrac
+                | AudioFormat::WmaPro
+                | AudioFormat::EnhancedAc3,
+                None,
+            ) => return AudioMapping::NoSampleRate,
+            (other, _) => return AudioMapping::Unmodelled(UnmodelledAudio::Format(other)),
+        };
+        AudioMapping::Load(load)
     }
 }
 
@@ -192,6 +208,26 @@ fn highest_rate(rates: AudioSampleRates) -> Option<u32> {
     .map(|(_, hz)| hz)
 }
 
+/// Audio a sink accepts whose packet load no public implementation models; it cannot be
+/// bounded, and the FRL capacity check reports it.
+#[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnmodelledAudio {
+    /// A Short Audio Descriptor's format (One Bit Audio, DST, extended and reserved codes).
+    Format(AudioFormat),
+    /// HDMI Multi-Stream Audio: several streams at once (HDMI Audio Data Block).
+    MultiStream {
+        /// The most streams the sink accepts at once.
+        max_streams: u8,
+    },
+    /// HDMI 3D Audio, up to 32 channels (HDMI Audio Data Block).
+    Audio3d {
+        /// The number of 3D audio descriptors.
+        descriptors: u8,
+    },
+}
+
 /// What [`AudioLoad::from_descriptor`] makes of a Short Audio Descriptor.
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -200,7 +236,7 @@ pub enum AudioMapping {
     /// The heaviest load a source may send for it.
     Load(AudioLoad),
     /// A format whose packet load no public implementation models; it cannot be bounded.
-    Unmodelled(AudioFormat),
+    Unmodelled(UnmodelledAudio),
     /// The descriptor declares no sample rate.
     NoSampleRate,
 }
@@ -264,12 +300,12 @@ pub enum FrlUnverified {
     /// The candidate uses Display Stream Compression, whose capacity computation is not
     /// implemented yet.
     Dsc,
-    /// The sink accepts an audio format whose packet load no public implementation
-    /// models, so the audio is bounded without it (see [`AudioMapping::Unmodelled`]).
-    UnmodelledAudio(AudioFormat),
-    /// The sink's audio is unknown: bare `no_std` builds carry no audio loads in
-    /// [`SinkCapabilities`][crate::SinkCapabilities], so the video was checked without
-    /// audio (see [`FrlAudio`]).
+    /// The sink accepts audio whose packet load no public implementation models, so the
+    /// audio is bounded without it (see [`UnmodelledAudio`]).
+    UnmodelledAudio(UnmodelledAudio),
+    /// The sink's audio is unknown, so the video was checked without audio:
+    /// [`SinkCapabilities::audio_loads`][crate::SinkCapabilities] was not filled in
+    /// (`None`), or the build has no alloc (see [`FrlAudio`]).
     AudioUnknown,
 }
 
@@ -284,13 +320,10 @@ impl core::fmt::Display for FrlUnverified {
                 f.write_str("the colour format is unknown to the computation")
             }
             Self::Dsc => f.write_str("DSC capacity is not computed yet"),
-            Self::UnmodelledAudio(format) => {
-                write!(
-                    f,
-                    "audio format {format:?} has no packet model and is not counted"
-                )
+            Self::UnmodelledAudio(audio) => {
+                write!(f, "audio {audio:?} has no packet model and is not counted")
             }
-            Self::AudioUnknown => f.write_str("the sink's audio is unknown (no alloc)"),
+            Self::AudioUnknown => f.write_str("the sink's audio is unknown"),
         }
     }
 }
@@ -786,7 +819,6 @@ fn evaluate(input: &FrlCapacityInput<'_>, alt: Assumptions) -> FrlEvaluation {
                             && input.v_active <= 576);
                     rate * if layout0 { 1 } else { 4 }
                 }
-                AudioPacketType::OneBitSample => rate,
                 AudioPacketType::HighBitRate if alt.contains(Assumptions::HBR_RATE) => 4 * rate,
                 AudioPacketType::HighBitRate => 16 * rate,
             }
@@ -1249,7 +1281,7 @@ mod tests {
             ShortAudioDescriptor::new(format, channels, rates, AudioFormatInfo::Raw(0))
         };
         let load = |t, hz, ch| AudioMapping::Load(AudioLoad::new(t, hz, ch));
-        use AudioPacketType::{HighBitRate, OneBitSample, Sample};
+        use AudioPacketType::{HighBitRate, Sample};
         let all = Rates::HZ_32000 | Rates::HZ_48000 | Rates::HZ_96000 | Rates::HZ_192000;
         assert_eq!(
             AudioLoad::from_descriptor(&sad(AudioFormat::Lpcm, 8, all)),
@@ -1260,10 +1292,14 @@ mod tests {
             AudioLoad::from_descriptor(&sad(AudioFormat::Ac3, 6, Rates::HZ_48000)),
             load(Sample, 48_000, 2)
         );
-        // Enhanced AC-3 at four times it.
+        // Enhanced AC-3 at four times it: sample packets up to 192 kHz, HBR above.
         assert_eq!(
             AudioLoad::from_descriptor(&sad(AudioFormat::EnhancedAc3, 8, Rates::HZ_48000)),
             load(Sample, 192_000, 2)
+        );
+        assert_eq!(
+            AudioLoad::from_descriptor(&sad(AudioFormat::EnhancedAc3, 8, Rates::HZ_96000)),
+            load(HighBitRate, 96_000, 2)
         );
         // TrueHD and DTS-HD: HBR at 192 kHz whatever the declared rate (768 kHz MAT).
         for format in [AudioFormat::MlpTrueHd, AudioFormat::DtsHd] {
@@ -1272,14 +1308,20 @@ mod tests {
                 load(HighBitRate, 192_000, 8)
             );
         }
+        // ... and without a declared rate too: their load does not depend on it.
         assert_eq!(
-            AudioLoad::from_descriptor(&sad(AudioFormat::OneBitAudio, 6, Rates::HZ_44100)),
-            load(OneBitSample, 44_100, 6)
+            AudioLoad::from_descriptor(&sad(AudioFormat::MlpTrueHd, 8, Rates::empty())),
+            load(HighBitRate, 192_000, 8)
         );
-        assert_eq!(
-            AudioLoad::from_descriptor(&sad(AudioFormat::Dst, 6, Rates::HZ_44100)),
-            AudioMapping::Unmodelled(AudioFormat::Dst)
-        );
+        // One Bit Audio and DST: no corroborated model; unmodelled, with or without rate.
+        for format in [AudioFormat::OneBitAudio, AudioFormat::Dst] {
+            for rates in [Rates::HZ_44100, Rates::empty()] {
+                assert_eq!(
+                    AudioLoad::from_descriptor(&sad(format, 6, rates)),
+                    AudioMapping::Unmodelled(UnmodelledAudio::Format(format))
+                );
+            }
+        }
         assert_eq!(
             AudioLoad::from_descriptor(&sad(AudioFormat::Lpcm, 2, Rates::empty())),
             AudioMapping::NoSampleRate

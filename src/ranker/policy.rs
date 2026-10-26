@@ -41,11 +41,25 @@ pub struct NegotiationPolicy {
 
     /// FRL candidates that fit their rate under some readings of the capacity computation
     /// only ([`Warning::FrlCapacityMarginal`][crate::Warning::FrlCapacityMarginal]).
+    /// Deserializing data without it gives the default policy's value.
+    #[cfg_attr(feature = "serde", serde(default = "default_frl_marginal"))]
     pub frl_marginal: FrlCandidateHandling,
 
     /// FRL candidates whose capacity could not be checked, or not fully
     /// ([`Warning::FrlCapacityUnverified`][crate::Warning::FrlCapacityUnverified]).
+    /// Deserializing data without it gives the default policy's value.
+    #[cfg_attr(feature = "serde", serde(default = "default_frl_unverified"))]
     pub frl_unverified: FrlCandidateHandling,
+}
+
+#[cfg(feature = "serde")]
+fn default_frl_marginal() -> FrlCandidateHandling {
+    NegotiationPolicy::BEST_QUALITY.frl_marginal
+}
+
+#[cfg(feature = "serde")]
+fn default_frl_unverified() -> FrlCandidateHandling {
+    NegotiationPolicy::BEST_QUALITY.frl_unverified
 }
 
 /// How the ranker treats an FRL candidate carrying a capacity warning.
@@ -108,5 +122,21 @@ impl NegotiationPolicy {
 impl Default for NegotiationPolicy {
     fn default() -> Self {
         Self::BEST_QUALITY
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod tests {
+    use super::*;
+
+    /// A policy serialized before `frl_marginal`/`frl_unverified` existed still
+    /// deserializes, with the default policy's values for them.
+    #[test]
+    fn policy_without_frl_fields_deserializes_with_defaults() {
+        let json = r#"{"prefer_native_resolution":true,"prefer_color_fidelity":false,"prefer_high_refresh":true,"penalize_dsc":false}"#;
+        let p: NegotiationPolicy = serde_json::from_str(json).unwrap();
+        assert!(p.prefer_high_refresh);
+        assert_eq!(p.frl_marginal, FrlCandidateHandling::Deprioritize);
+        assert_eq!(p.frl_unverified, FrlCandidateHandling::Keep);
     }
 }
