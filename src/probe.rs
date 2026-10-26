@@ -14,9 +14,11 @@ use crate::types::{CableCapabilities, CandidateConfig, SinkCapabilities, SourceC
 /// that cannot afford allocation or iteration use this function directly. The ranked
 /// iterator is built on top of this primitive.
 ///
-/// On alloc targets, returns all accumulated warnings on success and all violations
-/// on failure. On no-alloc targets, returns up to [`crate::engine::MAX_WARNINGS`]
-/// warnings on success and the first violation on failure.
+/// Returns the [`Warnings`][crate::engine::Warnings] of an accepted configuration or the
+/// [`Violations`][crate::engine::Violations] of a rejected one. With alloc they hold every
+/// warning and violation; without it, up to [`crate::engine::MAX_WARNINGS`] warnings (the
+/// rest counted in `dropped()`) and the first violation, the pass stopping there
+/// (`is_complete()` is `false`).
 ///
 /// Callers without cable information may pass [`CableCapabilities::unconstrained()`]
 /// to recover the previous optimistic behavior.
@@ -81,6 +83,7 @@ mod tests {
             &config(mode, encoding, depth),
         )
         .map(|_| ())
+        .map_err(crate::engine::Violations::into_vec)
     }
 
     #[test]

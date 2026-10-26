@@ -103,7 +103,7 @@ impl<E, En, R> NegotiatorBuilder<E, En, R> {
     ) -> NegotiatorBuilder<Layered<E, TaggingAdapter<X>>, En, R>
     where
         E: ConstraintEngine<Violation = TaggedViolation<InnerV>>,
-        X: ConstraintRule<InnerV>,
+        X: ConstraintRule<InnerV, E::Warning>,
         InnerV: crate::diagnostic::Diagnostic + 'static,
     {
         NegotiatorBuilder {
@@ -186,7 +186,7 @@ where
                             config.dsc_enabled,
                             false,
                         ),
-                        warnings,
+                        warnings: warnings.into_vec(),
                         trace: ReasoningTrace::new(),
                     };
 
@@ -204,7 +204,7 @@ where
                             bit_depth: config.bit_depth,
                             frl_rate: config.frl_rate,
                             dsc_enabled: config.dsc_enabled,
-                            violations,
+                            violations: violations.into_vec(),
                         });
                     }
                 }
@@ -240,7 +240,7 @@ mod tests {
             _: &CableCapabilities,
             _: &CandidateConfig<'_>,
         ) -> CheckResult<Warning, Violation> {
-            Ok(alloc::vec::Vec::new())
+            Ok(crate::engine::Warnings::new())
         }
     }
 
@@ -258,7 +258,9 @@ mod tests {
             _: &CableCapabilities,
             _: &CandidateConfig<'_>,
         ) -> CheckResult<Warning, Violation> {
-            Err(alloc::vec![Violation::ColorEncodingUnsupported])
+            Err(crate::engine::Violations::new(
+                Violation::ColorEncodingUnsupported,
+            ))
         }
     }
 
@@ -285,6 +287,16 @@ mod tests {
     impl crate::engine::rule::ConstraintRule<Violation> for AlwaysRejectRule {
         fn display_name(&self) -> &'static str {
             "always_reject"
+        }
+
+        fn warnings(
+            &self,
+            _: &crate::types::SinkCapabilities,
+            _: &crate::types::SourceCapabilities,
+            _: &crate::types::CableCapabilities,
+            _: &crate::types::CandidateConfig<'_>,
+            _: &mut dyn FnMut(crate::output::warning::Warning),
+        ) {
         }
 
         fn check(
@@ -597,6 +609,83 @@ mod tests {
 
     /// The pipeline deduplicates candidates that are identical across all five
     /// key fields; supplying the same mode twice yields only one accepted config.
+    /// `with_extra_rule` serves an engine with its own warning type: the extra rule is
+    /// written for that type, and the result is still an engine.
+    #[test]
+    fn with_extra_rule_accepts_a_rule_for_a_custom_warning_type() {
+        use crate::engine::rule::ConstraintRule;
+        use crate::engine::{Violations, Warnings};
+
+        #[derive(Debug)]
+        struct MyWarning;
+        impl core::fmt::Display for MyWarning {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str("mine")
+            }
+        }
+        struct MyEngine;
+        impl ConstraintEngine for MyEngine {
+            type Warning = MyWarning;
+            type Violation = TaggedViolation<Violation>;
+            fn check(
+                &self,
+                _: &SinkCapabilities,
+                _: &SourceCapabilities,
+                _: &CableCapabilities,
+                _: &CandidateConfig<'_>,
+            ) -> CheckResult<MyWarning, TaggedViolation<Violation>> {
+                Ok(Warnings::new())
+            }
+        }
+        struct MyRule;
+        impl ConstraintRule<Violation, MyWarning> for MyRule {
+            fn display_name(&self) -> &'static str {
+                "my_rule"
+            }
+            fn check(
+                &self,
+                _: &SinkCapabilities,
+                _: &SourceCapabilities,
+                _: &CableCapabilities,
+                _: &CandidateConfig<'_>,
+            ) -> Option<Violation> {
+                None
+            }
+            fn warnings(
+                &self,
+                _: &SinkCapabilities,
+                _: &SourceCapabilities,
+                _: &CableCapabilities,
+                _: &CandidateConfig<'_>,
+                warn: &mut dyn FnMut(MyWarning),
+            ) {
+                warn(MyWarning);
+            }
+        }
+        let _ = Violations::new(0u8); // the result types are public API
+        let builder = NegotiatorBuilder::default()
+            .with_engine(MyEngine)
+            .with_extra_rule(MyRule);
+        let mode = VideoMode::new(1920, 1080, 60u32, false);
+        let config = CandidateConfig::new(
+            &mode,
+            display_types::ColorFormat::Rgb444,
+            display_types::ColorBitDepth::Depth8,
+            display_types::cea861::HdmiForumFrl::NotSupported,
+            false,
+        );
+        let warnings = builder
+            .engine
+            .check(
+                &rgb8_sink(),
+                &SourceCapabilities::default(),
+                &CableCapabilities::unconstrained(),
+                &config,
+            )
+            .unwrap();
+        assert_eq!(warnings.len(), 1);
+    }
+
     #[test]
     fn negotiate_dedup_removes_identical_candidates() {
         let mode = VideoMode::new(1920, 1080, 60u16, false);

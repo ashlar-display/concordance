@@ -156,8 +156,9 @@ Determines whether a given configuration is valid for the supplied sink, source,
 Returns structured violations, not just a boolean.
 
 The default implementation enforces HDMI specification rules, in this order
-(`engine::checks::DEFAULT_CHECKS`): FRL ceiling, FRL capacity, refresh rate range, pixel
-clock ceiling, TMDS clock ceiling, colour encoding, bit depth, DSC. Callers can wrap or
+(`engine::checks::DEFAULT_CHECKS`): FRL ceiling, refresh rate range, pixel clock ceiling,
+TMDS clock ceiling, colour encoding, bit depth, DSC, and last FRL capacity (the costliest,
+and a candidate rejected for a more basic reason is reported for that reason). Callers can wrap or
 replace it to add vendor-specific constraint rules (e.g. platform bandwidth caps, quirk
 overrides) without touching the rest of the pipeline.
 
@@ -169,7 +170,7 @@ pub fn is_config_viable(
     source: &SourceCapabilities,
     cable: &CableCapabilities,
     config: &CandidateConfig,
-) -> Result<(), Vec<Violation>>
+) -> CheckResult<Warning, TaggedViolation<Violation>>  // Warnings or Violations, same type in every build
 ```
 
 The ranked iterator is built on top of this primitive. Firmware and embedded consumers that
@@ -277,7 +278,7 @@ pub trait ConstraintRule<V: Diagnostic, W: Diagnostic = Warning> {
         cable: &CableCapabilities,
         config: &CandidateConfig<'_>,
     ) -> Option<V>;
-    // Provided; reports nothing by default.
+    // Required: an empty body when the rule has nothing to report.
     fn warnings(
         &self,
         sink: &SinkCapabilities,
@@ -338,6 +339,8 @@ A platform-specific caller writes only their rule and passes it in:
 #     fn display_name(&self) -> &'static str { "platform_bandwidth" }
 #     fn check(&self, _: &SinkCapabilities, _: &SourceCapabilities,
 #              _: &CableCapabilities, _: &CandidateConfig<'_>) -> Option<Violation> { None }
+#     fn warnings(&self, _: &SinkCapabilities, _: &SourceCapabilities, _: &CableCapabilities,
+#                 _: &CandidateConfig<'_>, _: &mut dyn FnMut(concordance::Warning)) {}
 # }
 # let (sink, source, cable) = (SinkCapabilities::default(), SourceCapabilities::default(), CableCapabilities::default());
 # let limits = 594_000u32;
@@ -371,6 +374,7 @@ impl ConstraintRule<MyViolation> for MinResolutionRule {
         let pixels = config.mode.width as u32 * config.mode.height as u32;
         if pixels < self.min_pixels { Some(MyViolation::ResolutionBelowMinimum) } else { None }
     }
+    fn warnings(&self, ..., _: &mut dyn FnMut(Warning)) {} // nothing to warn about
 }
 
 // Exclude interlaced modes entirely.
@@ -381,6 +385,7 @@ impl ConstraintRule<MyViolation> for NoInterlacedRule {
     fn check(&self, ..., config: &CandidateConfig<'_>) -> Option<MyViolation> {
         if config.mode.interlaced { Some(MyViolation::InterlacedNotPermitted) } else { None }
     }
+    fn warnings(&self, ..., _: &mut dyn FnMut(Warning)) {}
 }
 
 let configs = NegotiatorBuilder::default()

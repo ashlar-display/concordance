@@ -17,11 +17,13 @@ use crate::output::warning::Violation;
 /// collected; in no-alloc mode the engine short-circuits on the first failure.
 pub static DEFAULT_CHECKS: CheckList<Violation> = &[
     &FrlCeilingCheck,
-    &FrlCapacityCheck,
     &RefreshRateCheck,
     &PixelClockCheck,
     &TmdsClockCheck,
     &ColorEncodingCheck,
     &BitDepthCheck,
     &DscCheck,
+    // Last: the costliest check, and a candidate an earlier rule rejects for a more basic
+    // reason (encoding, depth, DSC) is reported for that reason.
+    &FrlCapacityCheck,
 ];

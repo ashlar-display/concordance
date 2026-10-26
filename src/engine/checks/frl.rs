@@ -38,6 +38,16 @@ impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for FrlCeilingCheck {
         "frl_ceiling"
     }
 
+    fn warnings(
+        &self,
+        _: &crate::types::SinkCapabilities,
+        _: &crate::types::SourceCapabilities,
+        _: &crate::types::CableCapabilities,
+        _: &crate::types::CandidateConfig<'_>,
+        _: &mut dyn FnMut(crate::output::warning::Warning),
+    ) {
+    }
+
     fn check(
         &self,
         sink: &SinkCapabilities,
@@ -834,14 +844,17 @@ mod capacity_tests {
         let engine = DefaultConstraintEngine::default();
         let source = SourceCapabilities::default();
         let cable = CableCapabilities::unconstrained();
-        let rejected: Result<Vec<Warning>, Vec<TaggedViolation<Violation>>> =
+        let rejected: crate::engine::CheckResult<Warning, TaggedViolation<Violation>> =
             engine.check(&sink, &source, &cable, &config);
         assert!(rejected.is_err());
 
         // A rule list with only the capacity check accepts it, with the warning.
         static ONLY_CAPACITY: crate::engine::CheckList<Violation> = &[&FrlCapacityCheck];
         let engine = DefaultConstraintEngine::with_checks(ONLY_CAPACITY);
-        let warnings = engine.check(&sink, &source, &cable, &config).unwrap();
+        let warnings = engine
+            .check(&sink, &source, &cable, &config)
+            .unwrap()
+            .into_vec();
         assert!(matches!(
             warnings[..],
             [Warning::FrlCapacityMarginal { .. }]

@@ -5,9 +5,6 @@ use crate::engine::CheckResult;
 use crate::output::warning::{TaggedViolation, Warning};
 use crate::types::{CableCapabilities, CandidateConfig, SinkCapabilities, SourceCapabilities};
 
-#[cfg(any(feature = "alloc", feature = "std"))]
-use alloc::vec;
-
 /// A static slice of constraint rules, used as the check list for [`DefaultConstraintEngine`][crate::engine::DefaultConstraintEngine].
 ///
 /// The `'static` bound is required to support no-alloc targets, where the slice
@@ -54,8 +51,9 @@ pub trait ConstraintRule<V: Diagnostic, W: Diagnostic = Warning> {
 
     /// Reports non-fatal findings for a candidate, through `warn`.
     ///
-    /// The engine calls it only for candidates no rule rejected. The default reports
-    /// nothing.
+    /// The engine calls it only for candidates no rule rejected. Required, so that a rule
+    /// states it has nothing to report (an empty body) and a wrapper cannot forget to
+    /// forward the rule it wraps.
     fn warnings(
         &self,
         sink: &SinkCapabilities,
@@ -63,9 +61,7 @@ pub trait ConstraintRule<V: Diagnostic, W: Diagnostic = Warning> {
         cable: &CableCapabilities,
         config: &CandidateConfig<'_>,
         warn: &mut dyn FnMut(W),
-    ) {
-        let _ = (sink, source, cable, config, warn);
-    }
+    );
 }
 
 /// Wraps a [`ConstraintRule<V>`] so it produces a [`ConstraintRule<TaggedViolation<V>>`],
@@ -203,36 +199,26 @@ where
         cable: &CableCapabilities,
         config: &CandidateConfig<'_>,
     ) -> CheckResult<Self::Warning, Self::Violation> {
-        #[cfg(any(feature = "alloc", feature = "std"))]
-        {
-            match self.base.check(sink, source, cable, config) {
-                Err(mut violations) => {
+        match self.base.check(sink, source, cable, config) {
+            // A complete base pass collects the extra rule's violation too; one that
+            // stopped early (no alloc) is passed on as it is.
+            Err(mut violations) => {
+                if violations.is_complete() {
                     if let Some(v) = self.extra.check(sink, source, cable, config) {
                         violations.push(v);
                     }
-                    Err(violations)
                 }
-                Ok(mut warnings) => {
-                    if let Some(v) = self.extra.check(sink, source, cable, config) {
-                        Err(vec![v])
-                    } else {
-                        self.extra
-                            .warnings(sink, source, cable, config, &mut |w| warnings.push(w));
-                        Ok(warnings)
-                    }
+                Err(violations)
+            }
+            Ok(mut warnings) => {
+                if let Some(v) = self.extra.check(sink, source, cable, config) {
+                    Err(super::Violations::new(v))
+                } else {
+                    self.extra
+                        .warnings(sink, source, cable, config, &mut |w| warnings.push(w));
+                    Ok(warnings)
                 }
             }
-        }
-        #[cfg(not(any(feature = "alloc", feature = "std")))]
-        {
-            let mut warnings = self.base.check(sink, source, cable, config)?;
-            if let Some(v) = self.extra.check(sink, source, cable, config) {
-                return Err(v);
-            }
-            self.extra.warnings(sink, source, cable, config, &mut |w| {
-                super::push_warning(&mut warnings, w)
-            });
-            Ok(warnings)
         }
     }
 }
@@ -279,6 +265,16 @@ mod tests {
         fn display_name(&self) -> &'static str {
             "always_pass"
         }
+
+        fn warnings(
+            &self,
+            _: &crate::types::SinkCapabilities,
+            _: &crate::types::SourceCapabilities,
+            _: &crate::types::CableCapabilities,
+            _: &crate::types::CandidateConfig<'_>,
+            _: &mut dyn FnMut(crate::output::warning::Warning),
+        ) {
+        }
         fn check(
             &self,
             _: &SinkCapabilities,
@@ -294,6 +290,16 @@ mod tests {
         fn display_name(&self) -> &'static str {
             "fail_encoding"
         }
+
+        fn warnings(
+            &self,
+            _: &crate::types::SinkCapabilities,
+            _: &crate::types::SourceCapabilities,
+            _: &crate::types::CableCapabilities,
+            _: &crate::types::CandidateConfig<'_>,
+            _: &mut dyn FnMut(crate::output::warning::Warning),
+        ) {
+        }
         fn check(
             &self,
             _: &SinkCapabilities,
@@ -308,6 +314,16 @@ mod tests {
     impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for FailDepth {
         fn display_name(&self) -> &'static str {
             "fail_depth"
+        }
+
+        fn warnings(
+            &self,
+            _: &crate::types::SinkCapabilities,
+            _: &crate::types::SourceCapabilities,
+            _: &crate::types::CableCapabilities,
+            _: &crate::types::CandidateConfig<'_>,
+            _: &mut dyn FnMut(crate::output::warning::Warning),
+        ) {
         }
         fn check(
             &self,
@@ -443,7 +459,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(violations.len(), 1);
         assert!(matches!(
-            violations[0].violation,
+            violations.first().violation,
             Violation::ColorEncodingUnsupported
         ));
     }
@@ -516,7 +532,8 @@ mod tests {
         let m = mode();
         let w = engine
             .check(&sink(), &source(), &cable(), &config(&m))
-            .unwrap();
+            .unwrap()
+            .into_vec();
         assert!(matches!(w[..], [Warning::CableBandwidthMarginal]));
     }
 

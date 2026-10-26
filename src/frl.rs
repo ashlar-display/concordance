@@ -540,10 +540,9 @@ impl core::fmt::Display for FrlShortfall {
                 f,
                 "the active video would borrow {borrowed} tribytes, over the limit of {limit}"
             ),
-            Self::Utilisation { margin } => write!(
+            Self::Utilisation { margin_ppm } => write!(
                 f,
-                "the line's characters exceed its capacity (margin {} ppm)",
-                margin.ppm()
+                "the line's characters exceed its capacity (margin {margin_ppm} ppm)"
             ),
         }
     }
@@ -572,8 +571,11 @@ pub enum FrlShortfall {
     },
     /// The line's characters and the link overhead exceed the line's FRL characters.
     Utilisation {
-        /// The margin left over (negative or, under the strict reading, zero).
-        margin: Margin,
+        /// The margin left over in parts per million, rounded towards negative infinity
+        /// (negative, or under the strict reading zero). The exact fraction is the
+        /// evaluation's [`margin`][FrlEvaluation::margin]; this keeps the shortfall, and
+        /// the violations and warnings carrying it, small.
+        margin_ppm: i32,
     },
 }
 
@@ -920,7 +922,8 @@ fn evaluate(input: &FrlCapacityInput<'_>, alt: Assumptions) -> FrlEvaluation {
         margin.numer > 0
     };
     if !fits {
-        e.result = Err(FrlShortfall::Utilisation { margin });
+        let margin_ppm = margin.ppm().clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+        e.result = Err(FrlShortfall::Utilisation { margin_ppm });
     }
     e
 }

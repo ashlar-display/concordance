@@ -57,7 +57,7 @@ match is_config_viable(&sink, &source, &cable, &config) {
     Ok(_warnings) => println!("viable"),
     Err(violations) => {
         // Each violation is a TaggedViolation<Violation>: Display shows "[rule] message".
-        for v in &violations { eprintln!("rejected: {v}"); }
+        for v in violations.iter() { eprintln!("rejected: {v}"); }
     }
 }
 ```

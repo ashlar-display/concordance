@@ -11,6 +11,16 @@ impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for ColorEncodingCheck {
         "color_encoding"
     }
 
+    fn warnings(
+        &self,
+        _: &crate::types::SinkCapabilities,
+        _: &crate::types::SourceCapabilities,
+        _: &crate::types::CableCapabilities,
+        _: &crate::types::CandidateConfig<'_>,
+        _: &mut dyn FnMut(crate::output::warning::Warning),
+    ) {
+    }
+
     fn check(
         &self,
         sink: &SinkCapabilities,
@@ -77,6 +87,16 @@ pub struct BitDepthCheck;
 impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for BitDepthCheck {
     fn display_name(&self) -> &'static str {
         "bit_depth"
+    }
+
+    fn warnings(
+        &self,
+        _: &crate::types::SinkCapabilities,
+        _: &crate::types::SourceCapabilities,
+        _: &crate::types::CableCapabilities,
+        _: &crate::types::CandidateConfig<'_>,
+        _: &mut dyn FnMut(crate::output::warning::Warning),
+    ) {
     }
 
     fn check(

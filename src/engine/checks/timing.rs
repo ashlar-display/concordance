@@ -12,6 +12,16 @@ impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for RefreshRateCheck {
         "refresh_rate_range"
     }
 
+    fn warnings(
+        &self,
+        _: &crate::types::SinkCapabilities,
+        _: &crate::types::SourceCapabilities,
+        _: &crate::types::CableCapabilities,
+        _: &crate::types::CandidateConfig<'_>,
+        _: &mut dyn FnMut(crate::output::warning::Warning),
+    ) {
+    }
+
     fn check(
         &self,
         sink: &SinkCapabilities,
@@ -59,6 +69,16 @@ impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for PixelClockCheck {
         "pixel_clock_ceiling"
     }
 
+    fn warnings(
+        &self,
+        _: &crate::types::SinkCapabilities,
+        _: &crate::types::SourceCapabilities,
+        _: &crate::types::CableCapabilities,
+        _: &crate::types::CandidateConfig<'_>,
+        _: &mut dyn FnMut(crate::output::warning::Warning),
+    ) {
+    }
+
     fn check(
         &self,
         sink: &SinkCapabilities,
@@ -91,6 +111,16 @@ pub struct TmdsClockCheck;
 impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for TmdsClockCheck {
     fn display_name(&self) -> &'static str {
         "tmds_clock_ceiling"
+    }
+
+    fn warnings(
+        &self,
+        _: &crate::types::SinkCapabilities,
+        _: &crate::types::SourceCapabilities,
+        _: &crate::types::CableCapabilities,
+        _: &crate::types::CandidateConfig<'_>,
+        _: &mut dyn FnMut(crate::output::warning::Warning),
+    ) {
     }
 
     fn check(

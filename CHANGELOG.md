@@ -9,15 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking changes
 
-- **`ConstraintRule` takes a warning type: `ConstraintRule<V, W = Warning>`**, with a
-  provided `warnings` method, so rules can report non-fatal findings on candidates they
-  accept. Existing rules keep compiling (`W` defaults to the built-in `Warning`, and
-  `warnings` reports nothing by default). `Layered<E, R>` now requires
-  `R: ConstraintRule<E::Violation, E::Warning>`: a custom engine with its own warning
-  type, combined with a rule written for the built-in one, no longer composes; implement
-  the rule for that engine's warning type. `TaggingAdapter` and `Layered` forward warnings.
-- **The default engine rejects FRL rates too slow for the timing** (`FrlCapacityCheck`
-  in `DEFAULT_CHECKS`). Configurations accepted before can now be rejected.
+- **Constraint check results have private storage and the same type in every build.**
+  `CheckResult<W, V>` is now `Result<Warnings<W>, Violations<V>>` (it was
+  `Result<Vec<W>, Vec<V>>` with alloc and `Result<[Option<W>; MAX_WARNINGS], V>`
+  without). `Warnings` and `Violations` offer `iter`, `len`, `push` and `dropped` in every
+  build, `Violations` also `first`, `is_complete` and `stopped_early`, and with alloc
+  `into_vec`. Without alloc, warnings beyond `MAX_WARNINGS` are counted in
+  `Warnings::dropped` instead of lost, and the default engine marks a rejection
+  `stopped_early` (it stops at the first violation). Custom engines construct their
+  results with `Warnings::new`/`Violations::new`. The no-alloc result `is_config_viable`
+  returns by value is 144 bytes (8 warnings of 16 bytes and the counters).
+- **`ConstraintRule` takes a warning type and reports warnings:
+  `ConstraintRule<V, W = Warning>` with a required `warnings` method** (an empty body for
+  a rule with nothing to report). Every rule implementation must add it; a rule that wraps
+  another must forward it, which the requirement makes impossible to forget.
+  `TaggingAdapter` and both `Layered` forms forward warnings.
+- **`Layered<E, R>` requires `R: ConstraintRule<E::Violation, E::Warning>`**, and
+  `with_extra_rule` requires its rule to be one for the engine's warning type (`W =
+  E::Warning`; the built-in `Warning` for the default engine). Generic code bounding
+  `R: ConstraintRule<E::Violation>` must add `E::Warning`. A rule for the built-in
+  `Warning` no longer combines with an engine that has its own warning type: implement it
+  for that type.
+- **The default engine rejects FRL rates too slow for the timing** (`FrlCapacityCheck`,
+  last in `DEFAULT_CHECKS`). Configurations accepted before can now be rejected.
 
 ### Added
 
