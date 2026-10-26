@@ -73,4 +73,13 @@ then the field's doc comment documents it as always-false.
 validated in `DscCheck` nor surfaced in output. Completing this requires validating slice count
 and BPP against source and sink limits and adding a resolved `DscConfig` struct (or equivalent
 fields) to `NegotiatedConfig` so kernel drivers and firmware have actionable compression
-parameters to program the encoder.
+parameters to program the encoder. The FRL capacity check comes with it: DSC candidates are
+reported unverified until then (amdgpu's `dml1_frl_cap_chk_compressed` is the public
+reference).
+
+### Dropping candidates by policy
+
+`NegotiationPolicy` can deprioritize FRL candidates with a capacity warning, not drop them:
+the ranker has no channel to report a candidate it removes, and accepted candidates are
+never discarded silently. A "rejected by policy" entry in the negotiation log would allow a
+`Drop` option (and a "safe" preset) without breaking that rule.

@@ -155,9 +155,11 @@ implementations for each slot and falls back to the defaults when none is suppli
 Determines whether a given configuration is valid for the supplied sink, source, and cable.
 Returns structured violations, not just a boolean.
 
-The default implementation enforces HDMI specification rules. Callers can wrap or replace it
-to add vendor-specific constraint rules (e.g. platform bandwidth caps, quirk overrides)
-without touching the rest of the pipeline.
+The default implementation enforces HDMI specification rules, in this order
+(`engine::checks::DEFAULT_CHECKS`): FRL ceiling, FRL capacity, refresh rate range, pixel
+clock ceiling, TMDS clock ceiling, colour encoding, bit depth, DSC. Callers can wrap or
+replace it to add vendor-specific constraint rules (e.g. platform bandwidth caps, quirk
+overrides) without touching the rest of the pipeline.
 
 This is also exposed directly as the `no_std`-compatible binary probe:
 
@@ -206,6 +208,58 @@ under-estimates for HDMI Forum CTA modes by roughly 10–15% and can produce fal
 bandwidth ceiling checks. For custom timings where the exact clock is unavailable, the estimate
 is the best option — just note the caveat for modes near a bandwidth ceiling.
 
+#### FRL capacity
+
+`FrlCeilingCheck` only compares an FRL rate with the sink's, source's and cable's ceilings.
+Whether that rate can actually carry the mode is `FrlCapacityCheck`'s question, answered by
+the `frl` module's `frl_capacity`: a line fits only if its audio packets fit in the
+blanking, the active video can borrow what it needs from the blanking (at most 400
+tribytes), and the line's characters plus the link overhead fit in the characters the rate
+delivers per line.
+
+**No ground truth.** The HDMI 2.1 specification is not public, and this computation does
+not come from it. It follows the public implementations of the same procedure, amdgpu's
+`dml1_frl_cap_chk` and i915's FRL DFM, which share the procedure and its constants and
+differ in details. Where one contradicts its own comments or other formulas, the
+consistent reading is used (the blanking time counts one character per tribyte; the
+Audio Clock Regeneration packet is not compressible; the borrow limit applies). Where
+neither reading is visibly wrong, the point is an `Assumptions` flag (characters per line
+floored or rounded up, the margin's tolerance, the overhead's truncation, two audio
+layout and rate questions, the audio load, and EDID 1.3 versus 1.4 for DTD borders).
+
+**Evaluated at every reading.** `frl_capacity` evaluates every combination of the
+assumptions that apply and reports the worst (`strict`) and the best (`permissive`)
+evaluation, with every intermediate value, and the assumptions that alone decide. That
+band is the honest extent of what is known; when a point is settled (specification
+access, an erratum, hardware evidence), its flag stops applying and the band narrows.
+All arithmetic is exact integer arithmetic, `no_std`, no allocation.
+
+| Strict | Permissive | Outcome |
+|---|---|---|
+| fails | fails | rejected: `Violation::FrlCapacityExceeded { rate, shortfall }` |
+| fails | passes | accepted with `Warning::FrlCapacityMarginal { rate, deciding, shortfall }` |
+| passes | passes | accepted |
+
+A candidate whose capacity cannot be checked (a mode without `h_blank` or an exact pixel
+clock, a DSC candidate) or not fully (an audio format no implementation models; no audio
+data without alloc) is accepted with `Warning::FrlCapacityUnverified { rate, reason }`,
+never silently. The violation and warnings carry what explains the outcome;
+`FrlCapacityCheck::report(sink, config)` returns the full report on demand, deterministic,
+so a driver can compare it with its own vendor check, or replace the rule.
+
+**Audio.** Audio travels in the blanking. The sink bounds it: a source may send only the
+formats the sink declares, and `sink_capabilities_from_display` maps each Short Audio
+Descriptor (and basic audio) to the heaviest load a source may send for it
+(`AudioLoad::from_descriptor`, at IEC 61937 rates). `frl_capacity` borrows the loads through
+`FrlAudio`: `AtMost` for a bound like the sink's (the source may also send none, so the
+audio load is one of the assumptions), `OneOf` for what the source will send. In bare
+`no_std` builds `SinkCapabilities` carries no audio loads, so the engine reports each FRL
+candidate unverified for audio; firmware that knows its audio calls `frl_capacity` directly
+with a `static` or stack slice.
+
+Which of the rates that fit to prefer, and what to do with marginal or unverified
+candidates, is the ranker's and `NegotiationPolicy`'s (see criterion 1b below).
+
 #### Rule injection
 
 `ConstraintEngine` enables full replacement of the constraint policy, but replacement
@@ -214,7 +268,7 @@ case of adding rules on top of the default checks, a finer-grained unit of exten
 is provided:
 
 ```text
-pub trait ConstraintRule<V: Diagnostic> {
+pub trait ConstraintRule<V: Diagnostic, W: Diagnostic = Warning> {
     fn display_name(&self) -> &'static str;
     fn check(
         &self,
@@ -223,12 +277,24 @@ pub trait ConstraintRule<V: Diagnostic> {
         cable: &CableCapabilities,
         config: &CandidateConfig<'_>,
     ) -> Option<V>;
+    // Provided; reports nothing by default.
+    fn warnings(
+        &self,
+        sink: &SinkCapabilities,
+        source: &SourceCapabilities,
+        cable: &CableCapabilities,
+        config: &CandidateConfig<'_>,
+        warn: &mut dyn FnMut(W),
+    ) {}
 }
 ```
 
-`ConstraintRule<V>` is the unit of a single check — it either finds a violation of type
-`V` or it doesn't. `ConstraintEngine` coordinates a full pass (collecting all violations,
-or short-circuiting on the first in no-alloc mode) and additionally supports warnings.
+`ConstraintRule<V, W>` is the unit of a single check — it either finds a violation of type
+`V` or it doesn't, and for a candidate no rule rejected it may report warnings of type `W`
+(the built-in `Warning` unless a custom engine needs its own). `ConstraintEngine`
+coordinates a full pass (collecting all violations, or short-circuiting on the first in
+no-alloc mode), and collects the rules' warnings for accepted candidates; `TaggingAdapter`
+and both `Layered` forms forward them.
 
 A `Layered<E, R>` combinator extends a base engine with an additional rule, running both
 in sequence. The extra rule must produce the same violation type as the engine:
@@ -237,7 +303,7 @@ in sequence. The extra rule must produce the same violation type as the engine:
 impl<E, R> ConstraintEngine for Layered<E, R>
 where
     E: ConstraintEngine,
-    R: ConstraintRule<E::Violation>,
+    R: ConstraintRule<E::Violation, E::Warning>,
 {
     type Warning = E::Warning;
     type Violation = E::Violation;
@@ -371,6 +437,7 @@ accepted set has already passed the constraint engine.
 | # | Criterion                     | Direction         | Controlled by                                  |
 |---|-------------------------------|-------------------|------------------------------------------------|
 | 1 | DSC required                  | `false` first     | `penalize_dsc`                                 |
+| 1b | FRL capacity warning         | without first     | `frl_marginal`, `frl_unverified`               |
 | 2 | Native resolution             | native first      | `prefer_native_resolution`                     |
 | 3 | Quality/performance dimension | see below         | `prefer_color_fidelity`, `prefer_high_refresh` |
 | 4 | Interlaced                    | progressive first | always                                         |
@@ -400,6 +467,15 @@ same resolution, format, and depth is strictly preferable. The penalty pushes DS
 behind their uncompressed equivalents so they act as fallbacks, not first choices.
 `BEST_PERFORMANCE` disables the penalty: a high-refresh DSC mode may legitimately rank
 above a lower-refresh uncompressed one when performance is the goal.
+
+**FRL capacity warnings (criterion 1b).** `frl_marginal` and `frl_unverified` each say
+`Keep` (rank as usual) or `Deprioritize` (rank after every config without that warning).
+All presets deprioritize marginal candidates — there is evidence of risk, so a caller
+taking the first entry gets a sure configuration whenever one exists — and keep
+unverified ones, which mostly mean "could not check": one unmodelled audio format would
+otherwise push every FRL candidate below TMDS. There is no option to drop them: the ranker
+cannot report what it removes, and accepted candidates are never discarded silently. A
+caller that never wants them filters on the warnings each configuration carries.
 
 **FRL rate tiebreaker.** When two configs are otherwise equal, the one using the lower FRL
 rate is ranked first. A lower FRL rate achieves the same result at reduced link complexity
@@ -437,6 +513,8 @@ pub enum Warning {
     DscActive,
     #[error("cable bandwidth marginal for selected mode")]
     CableBandwidthMarginal,
+    FrlCapacityMarginal { rate, deciding, shortfall },
+    FrlCapacityUnverified { rate, reason },
     // ...
 }
 impl Diagnostic for Warning {}
@@ -453,8 +531,10 @@ pub struct ReasoningTrace {
 ```
 
 `ConstraintEngine` and `ConfigRanker` each declare an associated `Warning` type bounded by
-`Diagnostic`, so a custom component can emit its own warning variants without wrapping or
-losing type information. The default implementations use the built-in `Warning`.
+`Diagnostic`, and `ConstraintRule` takes one as a parameter, so a custom component can emit
+its own warning variants without wrapping or losing type information. The default
+implementations use the built-in `Warning`; the default engine's warnings come from its
+rules (today the FRL capacity check).
 
 Warnings are attached to accepted configurations — they do not prevent a mode from being
 offered, but give the caller enough information to surface concerns to the user or log them.
