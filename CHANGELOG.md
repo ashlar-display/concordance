@@ -69,6 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without alloc), each with its `FrlUnverified` reason. The
   violation and the marginal warning carry the shortfall (and the deciding assumptions);
   `FrlCapacityCheck::report` gives the full report for a candidate.
+- **A settled DTD border reading is not an assumption.** `FrlCapacityInput` gains
+  `dtd_border_reading` (with `with_dtd_border_reading`), which `from_mode` takes from
+  `VideoMode::dtd_border_reading` (display-types 0.5; piaf sets it when its caller fixes
+  the reading with `DtdBorderPolicy::Fixed`). When it is `Some`, `h_blank` already follows
+  that reading, so `DTD_BORDER_READING` does not apply and the borders are not counted a
+  second time; the verdict rests on the one reading.
 - **`NegotiationPolicy::frl_marginal` and `frl_unverified`** (`FrlCandidateHandling::Keep`
   or `Deprioritize`): the default ranker puts deprioritized FRL candidates after every
   configuration without such a warning (right after the DSC penalty) and records it in

@@ -51,7 +51,7 @@
 
 use bitflags::bitflags;
 use display_types::cea861::{AudioFormat, AudioSampleRates, HdmiForumFrl, ShortAudioDescriptor};
-use display_types::{ColorBitDepth, ColorFormat, VideoMode};
+use display_types::{ColorBitDepth, ColorFormat, DtdBorderReading, VideoMode};
 
 /// Maximum tribytes the active video may borrow from the blanking.
 const TB_BORROWED_MAX: u32 = 400;
@@ -92,7 +92,8 @@ bitflags! {
         /// A Detailed Timing Descriptor's blanking includes its borders (EDID 1.3, as EDIDs
         /// in practice are read), or, when set, excludes them (EDID 1.4): `h_blank` is
         /// then larger by both borders, at the same pixel clock. Applies when the input has
-        /// borders.
+        /// borders and their reading was not settled
+        /// ([`dtd_border_reading`][FrlCapacityInput::dtd_border_reading] is `None`).
         const DTD_BORDER_READING = 1 << 6;
     }
 }
@@ -351,6 +352,11 @@ pub struct FrlCapacityInput<'a> {
     /// The horizontal border on each side, in pixels; only the
     /// [`DTD_BORDER_READING`][Assumptions::DTD_BORDER_READING] assumption uses it.
     pub h_border: u16,
+    /// The reading of the borders, when the decoder's caller settled it
+    /// ([`VideoMode::dtd_border_reading`]): `h_blank` follows it, and the
+    /// [`DTD_BORDER_READING`][Assumptions::DTD_BORDER_READING] assumption does not apply.
+    /// `None` when it was not settled.
+    pub dtd_border_reading: Option<DtdBorderReading>,
     /// Active lines, or 0 when unknown; only the
     /// [`AUDIO_LAYOUT_SD_LINES`][Assumptions::AUDIO_LAYOUT_SD_LINES] assumption uses it, and
     /// does not apply when it is unknown.
@@ -379,6 +385,7 @@ impl<'a> FrlCapacityInput<'a> {
             h_active,
             h_blank,
             h_border: 0,
+            dtd_border_reading: None,
             v_active: 0,
             encoding,
             depth,
@@ -390,6 +397,13 @@ impl<'a> FrlCapacityInput<'a> {
     /// `h_active` is not changed: it already includes the borders.
     pub const fn with_h_border(mut self, h_border: u16) -> Self {
         self.h_border = h_border;
+        self
+    }
+
+    /// Records the settled reading of the borders, returning the updated input.
+    /// `h_blank` must already follow it.
+    pub const fn with_dtd_border_reading(mut self, reading: DtdBorderReading) -> Self {
+        self.dtd_border_reading = Some(reading);
         self
     }
 
@@ -409,7 +423,8 @@ impl<'a> FrlCapacityInput<'a> {
     ///
     /// `h_active` is the mode's width plus both horizontal borders, `v_active` its height
     /// plus both vertical borders (as amdgpu counts the active lines). Both saturate at
-    /// `u16::MAX`, which no real timing reaches.
+    /// `u16::MAX`, which no real timing reaches. The mode's
+    /// [`dtd_border_reading`][VideoMode::dtd_border_reading] is kept.
     ///
     /// # Errors
     ///
@@ -447,6 +462,7 @@ impl<'a> FrlCapacityInput<'a> {
             h_active,
             h_blank,
             h_border,
+            dtd_border_reading: mode.dtd_border_reading,
             v_active: mode.height.saturating_add(2 * u16::from(mode.v_border)),
             encoding,
             depth,
@@ -474,7 +490,7 @@ impl<'a> FrlCapacityInput<'a> {
                 _ => {}
             }
         }
-        if self.h_border > 0 {
+        if self.h_border > 0 && self.dtd_border_reading.is_none() {
             a |= Assumptions::DTD_BORDER_READING;
         }
         a
@@ -1206,6 +1222,18 @@ mod tests {
                 .readings
                 .contains(Assumptions::DTD_BORDER_READING)
         );
+
+        // Settled by the decoder's caller, one reading is evaluated: no longer marginal.
+        let settled_13 = input.with_dtd_border_reading(DtdBorderReading::Edid13);
+        let r = frl_capacity(&settled_13);
+        assert_eq!(r.verdict(), FrlVerdict::Exceeded);
+        assert_eq!(r.deciding, Assumptions::empty());
+        let settled_14 = rgb(R3, 332_996, 1952, 80 + 96, ColorBitDepth::Depth8)
+            .with_h_border(16)
+            .with_dtd_border_reading(DtdBorderReading::Edid14);
+        let r = frl_capacity(&settled_14);
+        assert_eq!(r.verdict(), FrlVerdict::Fits);
+        assert_eq!(r.deciding, Assumptions::empty());
     }
 
     #[test]
@@ -1224,6 +1252,13 @@ mod tests {
         assert_eq!(
             base.with_h_border(8).applicable_assumptions(),
             always | Assumptions::DTD_BORDER_READING
+        );
+        // A settled reading is not an assumption.
+        assert_eq!(
+            base.with_h_border(8)
+                .with_dtd_border_reading(DtdBorderReading::Edid14)
+                .applicable_assumptions(),
+            always
         );
     }
 
@@ -1265,6 +1300,19 @@ mod tests {
             (input.h_active, input.h_border, input.v_active),
             (3856, 8, 2168)
         );
+        assert_eq!(input.dtd_border_reading, None);
+        let settled = bordered
+            .clone()
+            .with_dtd_border_reading(DtdBorderReading::Edid14);
+        let input = FrlCapacityInput::from_mode(
+            &settled,
+            R6_4,
+            ColorFormat::Rgb444,
+            ColorBitDepth::Depth12,
+            FrlAudio::None,
+        )
+        .unwrap();
+        assert_eq!(input.dtd_border_reading, Some(DtdBorderReading::Edid14));
 
         let try_mode = |m: &VideoMode, rate| {
             FrlCapacityInput::from_mode(
