@@ -967,11 +967,13 @@ fn evaluate(input: &FrlCapacityInput<'_>, alt: Assumptions) -> FrlEvaluation {
     // 3 · tb_active · k_d, and likewise for the blanking.
     let active_fits = 2 * ha * k_n >= 3 * tb_active * k_d;
     let blank_fits = hb * k_n >= tb_blank * k_d;
+    // Blanking that does not fit has no time to lend. (It fails whether or not the active
+    // part fits: the active part needs 1.5 times the blanking's characters per period.)
+    if !blank_fits {
+        e.result = Err(FrlShortfall::Borrow);
+        return e;
+    }
     if !active_fits {
-        if !blank_fits {
-            e.result = Err(FrlShortfall::Borrow);
-            return e;
-        }
         // Borrowed periods (1.5 · tb_active / k − h_active), at the average tribyte rate
         // (tb_active + tb_blank) / line per period.
         let borrowed = div_ceil(
@@ -986,9 +988,6 @@ fn evaluate(input: &FrlCapacityInput<'_>, alt: Assumptions) -> FrlEvaluation {
             });
             return e;
         }
-    } else if !blank_fits {
-        e.result = Err(FrlShortfall::Borrow);
-        return e;
     }
 
     let fits = if alt.contains(Assumptions::MARGIN_TOLERANCE) {
@@ -1080,6 +1079,122 @@ mod tests {
         ] {
             assert_eq!(vic97_rgb12(rate).verdict(), FrlVerdict::Fits, "{rate:?}");
         }
+    }
+
+    /// 3840×2160 @ 120 Hz (VIC 118: 1188 MHz, h_blank 560), no audio.
+    fn vic118(
+        rate: HdmiForumFrl,
+        encoding: ColorFormat,
+        depth: ColorBitDepth,
+    ) -> FrlCapacityReport {
+        frl_capacity(&FrlCapacityInput::new(
+            rate, 1_188_000, 3840, 560, encoding, depth,
+        ))
+    }
+
+    #[test]
+    fn ycbcr420_halves_the_tribytes() {
+        // 4:2:0 12-bit: 18 bits per pixel, so 2880 active and 420 blanking tribytes.
+        let r = vic118(R3, ColorFormat::YCbCr420, ColorBitDepth::Depth12);
+        assert_eq!(r.verdict(), FrlVerdict::Exceeded);
+        assert_eq!(r.strict.result, Err(FrlShortfall::Borrow));
+
+        let r = vic118(R6_3, ColorFormat::YCbCr420, ColorBitDepth::Depth12);
+        assert_eq!(r.verdict(), FrlVerdict::Exceeded);
+        assert_eq!(
+            r.strict.result,
+            Err(FrlShortfall::BorrowLimit {
+                borrowed: 1074,
+                limit: 400
+            })
+        );
+
+        // 6 Gbps × 4: 4912 characters per line, 87 tribytes borrowed, margin
+        // 3337409/44822000 ≈ +0.0745.
+        let r = vic118(R6_4, ColorFormat::YCbCr420, ColorBitDepth::Depth12);
+        assert_eq!(r.verdict(), FrlVerdict::Fits);
+        assert_eq!(r.strict.chars_per_line, 4912);
+        assert_eq!(r.strict.tribytes_active, 2880);
+        assert_eq!(r.strict.tribytes_blank, 420);
+        assert_eq!(r.strict.audio_packets_per_line, 1);
+        assert_eq!(r.strict.tribytes_borrowed, 87);
+        assert_eq!(
+            (r.strict.margin.numer(), r.strict.margin.denom()),
+            (3_337_409, 44_822_000)
+        );
+        assert_eq!(r.strict.margin.ppm(), 74_459);
+
+        // 10-bit at 6 Gbps × 3 borrows within the limit (346), but the payload does not fit
+        // the line: margin −1980067/69689000 ≈ −0.0284, past the tolerance too.
+        let r = vic118(R6_3, ColorFormat::YCbCr420, ColorBitDepth::Depth10);
+        assert_eq!(r.verdict(), FrlVerdict::Exceeded);
+        assert_eq!(r.strict.tribytes_borrowed, 346);
+        assert_eq!(
+            (r.strict.margin.numer(), r.strict.margin.denom()),
+            (-1_980_067, 69_689_000)
+        );
+        assert_eq!(
+            r.strict.result,
+            Err(FrlShortfall::Utilisation {
+                margin_ppm: -28_413
+            })
+        );
+    }
+
+    #[test]
+    fn ycbcr422_is_24_bits_at_any_depth() {
+        // 4:2:2: 24 bits per pixel whatever the depth, so 3840 active and 560 blanking
+        // tribytes, as RGB 8-bit.
+        let r = vic118(R6_4, ColorFormat::YCbCr422, ColorBitDepth::Depth12);
+        assert_eq!(r.verdict(), FrlVerdict::Exceeded);
+        assert_eq!(
+            r.strict.result,
+            Err(FrlShortfall::BorrowLimit {
+                borrowed: 1435,
+                limit: 400
+            })
+        );
+
+        // 8 Gbps × 4: 6549 characters per line, 116 tribytes borrowed, margin
+        // 18578447/239038500 ≈ +0.0777.
+        for depth in [ColorBitDepth::Depth8, ColorBitDepth::Depth12] {
+            let r = vic118(HdmiForumFrl::Rate8Gbps4Lanes, ColorFormat::YCbCr422, depth);
+            assert_eq!(r.verdict(), FrlVerdict::Fits, "{depth:?}");
+            assert_eq!(r.strict.chars_per_line, 6549);
+            assert_eq!(r.strict.tribytes_active, 3840);
+            assert_eq!(r.strict.tribytes_blank, 560);
+            assert_eq!(r.strict.tribytes_borrowed, 116);
+            assert_eq!(
+                (r.strict.margin.numer(), r.strict.margin.denom()),
+                (18_578_447, 239_038_500)
+            );
+            assert_eq!(r.strict.margin.ppm(), 77_721);
+        }
+    }
+
+    #[test]
+    fn better_and_worse_prefer_by_result_then_margin() {
+        let eval = |result, numer| FrlEvaluation {
+            readings: Assumptions::empty(),
+            chars_per_line: 0,
+            tribytes_active: 0,
+            tribytes_blank: 0,
+            audio_packets_per_line: 0,
+            tribytes_borrowed: 0,
+            margin: Margin::new(numer, 100),
+            result,
+        };
+        let pass = eval(Ok(()), -1);
+        let fail = eval(Err(FrlShortfall::Borrow), 5);
+        // A passing evaluation wins over a failing one whatever the margins, in either order.
+        assert_eq!(better(fail, pass), pass);
+        assert_eq!(better(pass, fail), pass);
+        assert_eq!(worse(fail, pass), fail);
+        assert_eq!(worse(pass, fail), fail);
+        // Otherwise the margin decides.
+        let higher = eval(Ok(()), 2);
+        assert_eq!(better(pass, higher), higher);
+        assert_eq!(worse(pass, higher), pass);
     }
 
     #[test]
