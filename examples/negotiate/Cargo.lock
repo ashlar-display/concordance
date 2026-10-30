@@ -19,9 +19,9 @@ dependencies = [
 
 [[package]]
 name = "display-types"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d55798f52f556c3d0a8345ac33d44420bcadea3a2b93154248458f384fdddd78"
+checksum = "9babf91a660bef635a411f90ea6d9cf8d1ff5d45f9adb1bd8cd4f7d64704d485"
 dependencies = [
  "bitflags",
 ]
@@ -37,9 +37,9 @@ dependencies = [
 
 [[package]]
 name = "piaf"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "801f79c1ffb51b2feb3ef2d990c62dc1fddf78583f71dcdbed2db14bfa3a76dd"
+checksum = "bde3b9a256b797ee30d813e683bf5624f2a60048529557fff052576911ad5859"
 dependencies = [
  "bitflags",
  "display-types",
@@ -48,18 +48,18 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.106"
+version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
+checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "quote"
-version = "1.0.45"
+version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
+checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
 ]
@@ -97,6 +97,6 @@ dependencies = [
 
 [[package]]
 name = "unicode-ident"
-version = "1.0.24"
+version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
