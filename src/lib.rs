@@ -26,6 +26,7 @@ extern crate std;
 pub mod diagnostic;
 pub mod engine;
 pub mod error;
+pub mod frl;
 pub mod output;
 pub mod probe;
 pub mod types;
@@ -38,7 +39,7 @@ pub mod ranker;
 
 pub use diagnostic::Diagnostic;
 pub use engine::rule::TaggingAdapter;
-pub use engine::{CheckList, MAX_WARNINGS};
+pub use engine::{CheckList, CheckResult, MAX_WARNINGS, Violations, Warnings};
 pub use error::Error;
 pub use output::warning::{LimitSource, TaggedViolation, Violation, Warning};
 pub use probe::is_config_viable;

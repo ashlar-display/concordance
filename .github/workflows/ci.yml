@@ -78,7 +78,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-llvm-cov
 
@@ -97,7 +97,10 @@ jobs:
           cargo llvm-cov clean --workspace
           cargo llvm-cov --no-report
           cargo llvm-cov --no-report --features serde
+          # Unit tests live in `foo_tests.rs` beside `foo.rs`, and in `tests.rs` beside a
+          # `mod.rs`; only the crate's own code counts.
           LINES=$(cargo llvm-cov report --json --summary-only \
+            --ignore-filename-regex '(_tests|/tests)\.rs$' \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print(round(d['data'][0]['totals']['lines']['percent'], 2))")
           echo "COVERAGE=${LINES}" >> "$GITHUB_ENV"
 

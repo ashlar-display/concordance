@@ -11,8 +11,8 @@ path = "../.."
 features = ["std"]
 
 [dependencies.piaf]
-version = "0.4.1"
+version = "0.5"
 features = ["std"]
 
 [dependencies.display-types]
-version = "0.4"
+version = "0.5"

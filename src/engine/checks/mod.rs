@@ -5,7 +5,7 @@ mod timing;
 
 pub use color::{BitDepthCheck, ColorEncodingCheck};
 pub use dsc::DscCheck;
-pub use frl::FrlCeilingCheck;
+pub use frl::{FrlCapacityCheck, FrlCeilingCheck};
 pub use timing::{PixelClockCheck, RefreshRateCheck, TmdsClockCheck};
 
 use crate::engine::rule::CheckList;
@@ -23,4 +23,7 @@ pub static DEFAULT_CHECKS: CheckList<Violation> = &[
     &ColorEncodingCheck,
     &BitDepthCheck,
     &DscCheck,
+    // Last: the costliest check, and a candidate an earlier rule rejects for a more basic
+    // reason (encoding, depth, DSC) is reported for that reason.
+    &FrlCapacityCheck,
 ];

@@ -1,12 +1,24 @@
 # concordance
 
-[![CI](https://github.com/DracoWhitefire/concordance/actions/workflows/ci.yml/badge.svg)](https://github.com/DracoWhitefire/concordance/actions/workflows/ci.yml)
+[![CI](https://github.com/ashlar-display/concordance/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlar-display/concordance/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/concordance.svg)](https://crates.io/crates/concordance)
 [![docs.rs](https://docs.rs/concordance/badge.svg)](https://docs.rs/concordance)
-[![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue.svg)](https://github.com/DracoWhitefire/concordance/blob/main/LICENSE)
+[![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue.svg)](https://github.com/ashlar-display/concordance/blob/main/LICENSE)
 [![Rust 1.85+](https://img.shields.io/badge/rustc-1.85+-orange.svg)](https://blog.rust-lang.org/2025/02/20/Rust-1.85.0.html)
 [![SLSA Level 2](https://slsa.dev/images/gh-badge-level2.svg)](https://slsa.dev)
 [![trusted publishing only](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcrates.io%2Fapi%2Fv1%2Fcrates%2Fconcordance&query=%24.crate.trustpub_only&label=trusted%20publishing%20only)](#verifying-releases)
+
+> **Part of [Ashlar](https://ashlar-display.org)** — a display connection stack in Rust,
+> HDMI 2.1 first: from EDID parsing through mode negotiation to FRL link training.
+>
+> [display-types](https://github.com/ashlar-display/display-types) ·
+> [piaf](https://github.com/ashlar-display/piaf) ·
+> **concordance** ·
+> [cartouche](https://github.com/ashlar-display/cartouche) ·
+> [culvert](https://github.com/ashlar-display/culvert) ·
+> [plumbob](https://github.com/ashlar-display/plumbob) ·
+> [hdmi-hal](https://github.com/ashlar-display/hdmi-hal) ·
+> [hdmi-hal-i2c-dev](https://github.com/ashlar-display/hdmi-hal-i2c-dev)
 
 HDMI 2.1 mode negotiation — policy layer of the display connection stack.
 
@@ -45,7 +57,7 @@ match is_config_viable(&sink, &source, &cable, &config) {
     Ok(_warnings) => println!("viable"),
     Err(violations) => {
         // Each violation is a TaggedViolation<Violation>: Display shows "[rule] message".
-        for v in &violations { eprintln!("rejected: {v}"); }
+        for v in violations.iter() { eprintln!("rejected: {v}"); }
     }
 }
 ```
@@ -92,8 +104,17 @@ For the common case of adding a rule on top of the default checks, `with_extra_r
 a single `ConstraintRule` without reimplementing everything else.
 
 **Custom violation and warning types.** `ConstraintEngine` and `ConfigRanker` declare
-associated `Warning` and `Violation` types bounded by `Diagnostic`. A custom component emits
-its own variants with full type fidelity — no wrapping, no loss of structured information.
+associated `Warning` and `Violation` types bounded by `Diagnostic`, and a `ConstraintRule`
+can report warnings of its engine's type. A custom component emits its own variants with
+full type fidelity — no wrapping, no loss of structured information.
+
+**FRL rates that can carry the mode.** An FRL rate within every ceiling is rejected when it
+cannot carry the timing: audio in the blanking, borrowing, and the line's characters with
+the link overhead. A candidate whose capacity cannot be checked (no blanking, DSC, unknown
+audio) is accepted with a warning saying so. The HDMI 2.1 specification is not public; the computation follows the public
+implementations (amdgpu, i915) and evaluates every reading where they disagree, so a rate
+that fits under some readings only is accepted with a warning naming what decides, and
+`NegotiationPolicy` ranks it after the sure ones. See `doc/architecture.md`.
 
 **Cable is a first-class constraint.** Link capability is determined by source, sink, *and*
 cable. A cable that cannot carry FRL or whose TMDS clock ceiling is too low produces a
@@ -148,7 +169,7 @@ cable capabilities.
 
 ## Out of scope
 
-- **EDID parsing** — that's [piaf](https://github.com/DracoWhitefire/piaf).
+- **EDID parsing** — that's [piaf](https://github.com/ashlar-display/piaf).
 - **Source capability discovery** — querying DRM/KMS or VBIOS for GPU limits.
 - **Cable capability discovery** — reading the HDMI cable type marker or accepting a
   user override.
@@ -174,16 +195,24 @@ Extended documentation lives under [`doc/`](doc/).
 ## Verifying releases
 
 Releases are built on GitHub Actions and attested with
-[SLSA Build Level 2](https://slsa.dev) provenance (from the next release after 0.1.0). To
-verify a release `.crate` against its signed provenance, install the
+[SLSA Build Level 2](https://slsa.dev) provenance (from 0.2.0). To verify a release
+`.crate` against its signed provenance, install the
 [GitHub CLI](https://cli.github.com/) and run:
 
 ```sh
-gh attestation verify concordance-X.Y.Z.crate --repo DracoWhitefire/concordance
+gh attestation verify concordance-X.Y.Z.crate --repo ashlar-display/concordance
+```
+
+The release from before the repository moved to the `ashlar-display` organization (0.2.0)
+was attested under its previous owner, and verifies against it:
+
+```sh
+gh attestation verify concordance-0.2.0.crate --owner DracoWhitefire \
+  --signer-repo DracoWhitefire/concordance
 ```
 
 The attested `.crate` is attached to each
-[GitHub release](https://github.com/DracoWhitefire/concordance/releases).
+[GitHub release](https://github.com/ashlar-display/concordance/releases).
 
 Those releases are also uploaded through crates.io
 [trusted publishing](https://rust-lang.github.io/rfcs/3691-trusted-publishing-cratesio.html): the publish
@@ -201,4 +230,4 @@ curl -A "your-tool (contact)" https://crates.io/api/v1/crates/concordance/X.Y.Z
 
 ## License
 
-Licensed under the [Mozilla Public License 2.0](https://github.com/DracoWhitefire/concordance/blob/main/LICENSE).
+Licensed under the [Mozilla Public License 2.0](https://github.com/ashlar-display/concordance/blob/main/LICENSE).

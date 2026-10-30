@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-30
+
+### Breaking changes
+
+- **Requires display-types 0.5.** concordance's public types (`VideoMode` and the colour
+  and audio types in `SinkCapabilities`, `CandidateConfig` and `NegotiatedConfig`) are
+  display-types', so callers move to 0.5 with it. The FRL capacity check reads
+  `VideoMode::h_blank`, and `sink_capabilities_from_display` reads 0.5's
+  `HdmiAudioBlock` (stream count and 3D audio).
+- **Constraint check results have private storage and the same type in every build.**
+  `CheckResult<W, V>` is now `Result<Warnings<W>, Violations<V>>` (it was
+  `Result<Vec<W>, Vec<V>>` with alloc and `Result<[Option<W>; MAX_WARNINGS], V>`
+  without). `Warnings` and `Violations` offer `iter`, `len`, `push` and `dropped` in every
+  build, `Violations` also `first`, `is_complete` and `stopped_early`, and with alloc
+  `into_vec`. Without alloc, warnings beyond `MAX_WARNINGS` are counted in
+  `Warnings::dropped` instead of lost, and the default engine marks a rejection
+  `stopped_early` (it stops at the first violation). Custom engines construct their
+  results with `Warnings::new`/`Violations::new`. The no-alloc result `is_config_viable`
+  returns by value is 144 bytes (8 warnings of 16 bytes and the counters).
+- **`ConstraintRule` takes a warning type and reports warnings:
+  `ConstraintRule<V, W = Warning>` with a required `warnings` method** (an empty body for
+  a rule with nothing to report). Every rule implementation must add it; a rule that wraps
+  another must forward it, which the requirement makes impossible to forget.
+  `TaggingAdapter` and both `Layered` forms forward warnings.
+- **`Layered<E, R>` requires `R: ConstraintRule<E::Violation, E::Warning>`**, and
+  `with_extra_rule` requires its rule to be one for the engine's warning type (`W =
+  E::Warning`; the built-in `Warning` for the default engine). Generic code bounding
+  `R: ConstraintRule<E::Violation>` must add `E::Warning`. A rule for the built-in
+  `Warning` no longer combines with an engine that has its own warning type: implement it
+  for that type.
+- **The default engine rejects FRL rates too slow for the timing** (`FrlCapacityCheck`,
+  last in `DEFAULT_CHECKS`). Configurations accepted before can now be rejected.
+
+### Added
+
+- **`frl` module: FRL capacity.** `frl_capacity` decides whether an HDMI 2.1 FRL rate can
+  carry an uncompressed timing: audio in the blanking, borrowing from the blanking (at most
+  400 tribytes), and the line's characters with the link overhead. It follows the public
+  implementations (amdgpu's `dml1_frl_cap_chk`, i915's FRL DFM), not the specification,
+  which is not public. Where they disagree and neither is visibly wrong, the point is an
+  `Assumptions` flag; every combination is evaluated, and the `FrlCapacityReport` gives the
+  strict and permissive evaluations, a `Fits`/`Marginal`/`Exceeded` verdict and the
+  deciding assumptions. Exact integer arithmetic, `no_std`, no allocation.
+- **Audio for the FRL capacity check.** `FrlAudio` borrows the audio loads to count (none,
+  a bound such as the sink's, or what the source may send); `AudioLoad::from_descriptor`
+  maps a Short Audio Descriptor to the heaviest load a source may send for it (IEC 61937
+  rates: E-AC-3 at four times the declared rate, as High Bit Rate audio above 192 kHz;
+  TrueHD and DTS-HD as High Bit Rate audio whatever the declared rate). One Bit Audio,
+  DST, extended and reserved formats have no corroborated packet model and are
+  `UnmodelledAudio`, as are HDMI Multi-Stream Audio and HDMI 3D Audio. `SinkCapabilities`
+  gains `audio_loads: Option<Vec<AudioLoad>>` (`None` = unknown, the default and what
+  deserializing older data gives; `sink_capabilities_from_display` fills it from the CTA
+  Audio Data Block and the basic audio flag), `unmodelled_audio`, and `frl_audio()`
+  (alloc only); `SinkBuildWarning` gains `AudioDescriptorWithoutSampleRate`. Unknown audio
+  (`None`, or a bare `no_std` build) is reported as `FrlUnverified::AudioUnknown`, never
+  counted as none; `frl_capacity` takes a caller's own loads directly.
+- **`FrlCapacityCheck`** in the default rules: rejects with
+  `Violation::FrlCapacityExceeded` only when the timing fits under no reading; accepts
+  with `Warning::FrlCapacityMarginal` (naming the deciding assumptions) when it fits under
+  some, and with `Warning::FrlCapacityUnverified` when the capacity cannot be checked, or
+  not fully (no blanking or pixel clock, DSC, an unmodelled audio format, or no audio data
+  without alloc), each with its `FrlUnverified` reason. The
+  violation and the marginal warning carry the shortfall (and the deciding assumptions);
+  `FrlCapacityCheck::report` gives the full report for a candidate.
+- **A settled DTD border reading is not an assumption.** `FrlCapacityInput` gains
+  `dtd_border_reading` (with `with_dtd_border_reading`), which `from_mode` takes from
+  `VideoMode::dtd_border_reading` (display-types 0.5; piaf sets it when its caller fixes
+  the reading with `DtdBorderPolicy::Fixed`). When it is `Some`, `h_blank` already follows
+  that reading, so `DTD_BORDER_READING` does not apply and the borders are not counted a
+  second time; the verdict rests on the one reading.
+- **`NegotiationPolicy::frl_marginal` and `frl_unverified`** (`FrlCandidateHandling::Keep`
+  or `Deprioritize`): the default ranker puts deprioritized FRL candidates after every
+  configuration without such a warning (right after the DSC penalty) and records it in
+  their trace. All presets deprioritize marginal candidates and keep unverified ones.
+  There is no option to drop them: accepted candidates are never discarded silently;
+  filter on the warnings instead.
+
+### Changed
+
+- **Part of Ashlar** — the README now opens with a block naming the
+  [Ashlar](https://ashlar-display.org) stack and linking the other crates in it. Keywords
+  are aligned across the stack, with `ashlar` and `hdmi` on every crate; `ashlar` is added,
+  `no_std` is now spelled `no-std`, `embedded` is dropped in favour of more specific
+  keywords. Categories: `parser-implementations` is replaced by `no-std` and
+  `no-std::no-alloc` (concordance negotiates; it does not parse). The crate's `homepage` is
+  now the Ashlar website.
+
+- `doc/roadmap.md` drops its "Shipped" section, a stale copy of what this changelog
+  records; the roadmap lists only what is planned.
+- **Moved to the `ashlar-display` organization** — the repository is now
+  `ashlar-display/concordance` (the old URLs redirect), and `repository` points there.
+  Releases are attested and published from the new repository; 0.2.0, attested before the
+  move, verifies with `--owner DracoWhitefire --signer-repo DracoWhitefire/concordance`
+  (see "Verifying releases" in the README). The code of conduct is now the organization's,
+  shared by every Ashlar repository; the repository's own copy is removed.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added

@@ -1,26 +1,5 @@
 # Roadmap
 
-## Shipped
-
-### 0.1.0 — Initial release
-
-Three-stage negotiation pipeline: enumerate candidates, constrain against HDMI 2.1 rules,
-rank by policy.
-
-- `is_config_viable` — no-alloc constraint probe for firmware and embedded targets
-- `NegotiatorBuilder` — ranked pipeline for `alloc`/`std` targets
-- `DefaultConstraintEngine` with HDMI 2.1 specification constraint checks
-- `DefaultEnumerator` and `SliceEnumerator` — Cartesian product candidate generation
-- `DefaultRanker` with `NegotiationPolicy` and presets (`BestQuality`, `BestPerformance`,
-  `PowerSaving`)
-- `ReasoningTrace` — per-config audit log of constraint decisions and ranking criteria
-- `ConstraintRule` trait and `Layered` combinator for additive rule injection
-- `sink_capabilities_from_display` — bridge from `DisplayCapabilities` (piaf) to
-  `SinkCapabilities`
-- `CableCapabilities::unconstrained()` for callers without cable information
-- `serde` feature: `Serialize`/`Deserialize` on all public types
-- `no_std` support at all three resource tiers (no-alloc, alloc, std)
-
 ## Planned
 
 ### Fixture corpus
@@ -94,4 +73,13 @@ then the field's doc comment documents it as always-false.
 validated in `DscCheck` nor surfaced in output. Completing this requires validating slice count
 and BPP against source and sink limits and adding a resolved `DscConfig` struct (or equivalent
 fields) to `NegotiatedConfig` so kernel drivers and firmware have actionable compression
-parameters to program the encoder.
+parameters to program the encoder. The FRL capacity check comes with it: DSC candidates are
+reported unverified until then (amdgpu's `dml1_frl_cap_chk_compressed` is the public
+reference).
+
+### Dropping candidates by policy
+
+`NegotiationPolicy` can deprioritize FRL candidates with a capacity warning, not drop them:
+the ranker has no channel to report a candidate it removes, and accepted candidates are
+never discarded silently. A "rejected by policy" entry in the negotiation log would allow a
+`Drop` option (and a "safe" preset) without breaking that rule.
