@@ -226,7 +226,7 @@ where
 mod tests {
     use super::*;
     use crate::diagnostic::Diagnostic;
-    use crate::engine::{ConstraintEngine, DefaultConstraintEngine};
+    use crate::engine::{ConstraintEngine, DefaultConstraintEngine, Violations};
     use crate::output::warning::Violation;
     use crate::types::{CableCapabilities, CandidateConfig, SinkCapabilities, SourceCapabilities};
     use alloc::vec::Vec;
@@ -462,6 +462,38 @@ mod tests {
             violations.first().violation,
             Violation::ColorEncodingUnsupported
         ));
+    }
+
+    #[test]
+    fn layered_engine_base_stopped_early_skips_the_extra_rule() {
+        // A base that stopped at its first violation (as the default engine does without
+        // alloc): the extra rule is not run, so the result stays marked incomplete.
+        struct StopsEarly;
+        impl ConstraintEngine for StopsEarly {
+            type Warning = Warning;
+            type Violation = TaggedViolation<Violation>;
+            fn check(
+                &self,
+                _: &SinkCapabilities,
+                _: &SourceCapabilities,
+                _: &CableCapabilities,
+                _: &CandidateConfig<'_>,
+            ) -> CheckResult<Self::Warning, Self::Violation> {
+                Err(Violations::new(TaggedViolation {
+                    rule: "stops_early",
+                    violation: Violation::ColorEncodingUnsupported,
+                })
+                .stopped_early())
+            }
+        }
+        let m = mode();
+        let engine = Layered::new(StopsEarly, TaggingAdapter(FailDepth));
+        let violations = engine
+            .check(&sink(), &source(), &cable(), &config(&m))
+            .unwrap_err();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations.first().rule, "stops_early");
+        assert!(!violations.is_complete());
     }
 
     // --- warnings ---

@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn warnings_keep_order_and_count() {
-        let mut w = Warnings::new();
+        let mut w = Warnings::default();
         assert!(w.is_empty());
         w.push(1);
         w.push(2);
@@ -213,6 +213,7 @@ mod tests {
         let mut v = Violations::new('a');
         v.push('b');
         assert_eq!(*v.first(), 'a');
+        assert!(!v.is_empty());
         assert!(v.is_complete());
         #[cfg(any(feature = "alloc", feature = "std"))]
         assert_eq!((v.len(), v.dropped()), (2, 0));
