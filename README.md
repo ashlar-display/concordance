@@ -57,7 +57,7 @@ match is_config_viable(&sink, &source, &cable, &config) {
     Ok(_warnings) => println!("viable"),
     Err(violations) => {
         // Each violation is a TaggedViolation<Violation>: Display shows "[rule] message".
-        for v in &violations { eprintln!("rejected: {v}"); }
+        for v in violations.iter() { eprintln!("rejected: {v}"); }
     }
 }
 ```
@@ -104,8 +104,17 @@ For the common case of adding a rule on top of the default checks, `with_extra_r
 a single `ConstraintRule` without reimplementing everything else.
 
 **Custom violation and warning types.** `ConstraintEngine` and `ConfigRanker` declare
-associated `Warning` and `Violation` types bounded by `Diagnostic`. A custom component emits
-its own variants with full type fidelity — no wrapping, no loss of structured information.
+associated `Warning` and `Violation` types bounded by `Diagnostic`, and a `ConstraintRule`
+can report warnings of its engine's type. A custom component emits its own variants with
+full type fidelity — no wrapping, no loss of structured information.
+
+**FRL rates that can carry the mode.** An FRL rate within every ceiling is rejected when it
+cannot carry the timing: audio in the blanking, borrowing, and the line's characters with
+the link overhead. A candidate whose capacity cannot be checked (no blanking, DSC, unknown
+audio) is accepted with a warning saying so. The HDMI 2.1 specification is not public; the computation follows the public
+implementations (amdgpu, i915) and evaluates every reading where they disagree, so a rate
+that fits under some readings only is accepted with a warning naming what decides, and
+`NegotiationPolicy` ranks it after the sure ones. See `doc/architecture.md`.
 
 **Cable is a first-class constraint.** Link capability is determined by source, sink, *and*
 cable. A cable that cannot carry FRL or whose TMDS clock ceiling is too low produces a

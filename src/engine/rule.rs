@@ -2,11 +2,8 @@
 
 use crate::diagnostic::Diagnostic;
 use crate::engine::CheckResult;
-use crate::output::warning::TaggedViolation;
+use crate::output::warning::{TaggedViolation, Warning};
 use crate::types::{CableCapabilities, CandidateConfig, SinkCapabilities, SourceCapabilities};
-
-#[cfg(any(feature = "alloc", feature = "std"))]
-use alloc::vec;
 
 /// A static slice of constraint rules, used as the check list for [`DefaultConstraintEngine`][crate::engine::DefaultConstraintEngine].
 ///
@@ -28,7 +25,11 @@ pub type CheckList<V> = &'static [&'static (dyn ConstraintRule<V> + Sync)];
 /// Custom rules sharing the built-in violation type can be injected via
 /// [`NegotiatorBuilder::with_extra_rule`][crate::NegotiatorBuilder::with_extra_rule]
 /// without replacing or reimplementing the default engine.
-pub trait ConstraintRule<V: Diagnostic> {
+///
+/// A rule may also report non-fatal findings on candidates it accepts, through
+/// [`warnings`][Self::warnings]. Their type `W` defaults to the built-in [`Warning`];
+/// a rule for a custom engine can use that engine's warning type instead.
+pub trait ConstraintRule<V: Diagnostic, W: Diagnostic = Warning> {
     /// A short, stable identifier for this rule.
     ///
     /// Used in [`ReasoningTrace`][crate::output::trace::ReasoningTrace] entries to
@@ -47,6 +48,20 @@ pub trait ConstraintRule<V: Diagnostic> {
         cable: &CableCapabilities,
         config: &CandidateConfig<'_>,
     ) -> Option<V>;
+
+    /// Reports non-fatal findings for a candidate, through `warn`.
+    ///
+    /// The engine calls it only for candidates no rule rejected. Required, so that a rule
+    /// states it has nothing to report (an empty body) and a wrapper cannot forget to
+    /// forward the rule it wraps.
+    fn warnings(
+        &self,
+        sink: &SinkCapabilities,
+        source: &SourceCapabilities,
+        cable: &CableCapabilities,
+        config: &CandidateConfig<'_>,
+        warn: &mut dyn FnMut(W),
+    );
 }
 
 /// Wraps a [`ConstraintRule<V>`] so it produces a [`ConstraintRule<TaggedViolation<V>>`],
@@ -57,10 +72,11 @@ pub trait ConstraintRule<V: Diagnostic> {
 /// a [`Layered`] engine by hand.
 pub struct TaggingAdapter<R>(pub R);
 
-impl<R, V> ConstraintRule<TaggedViolation<V>> for TaggingAdapter<R>
+impl<R, V, W> ConstraintRule<TaggedViolation<V>, W> for TaggingAdapter<R>
 where
-    R: ConstraintRule<V>,
+    R: ConstraintRule<V, W>,
     V: Diagnostic,
+    W: Diagnostic,
 {
     fn display_name(&self) -> &'static str {
         self.0.display_name()
@@ -79,6 +95,17 @@ where
                 rule: self.0.display_name(),
                 violation,
             })
+    }
+
+    fn warnings(
+        &self,
+        sink: &SinkCapabilities,
+        source: &SourceCapabilities,
+        cable: &CableCapabilities,
+        config: &CandidateConfig<'_>,
+        warn: &mut dyn FnMut(W),
+    ) {
+        self.0.warnings(sink, source, cable, config, warn);
     }
 }
 
@@ -109,15 +136,16 @@ impl<Base, Extra> Layered<Base, Extra> {
     }
 }
 
-/// `Layered<R1, R2>` is itself a `ConstraintRule<V>` when both components are.
+/// `Layered<R1, R2>` is itself a `ConstraintRule<V, W>` when both components are.
 ///
 /// Evaluates the base rule first; if it passes, evaluates the extra rule. Returns
-/// the first violation found, or `None` if both pass.
-impl<R1, R2, V> ConstraintRule<V> for Layered<R1, R2>
+/// the first violation found, or `None` if both pass. Warnings come from both.
+impl<R1, R2, V, W> ConstraintRule<V, W> for Layered<R1, R2>
 where
-    R1: ConstraintRule<V>,
-    R2: ConstraintRule<V>,
+    R1: ConstraintRule<V, W>,
+    R2: ConstraintRule<V, W>,
     V: Diagnostic,
+    W: Diagnostic,
 {
     fn display_name(&self) -> &'static str {
         "layered"
@@ -134,6 +162,18 @@ where
             .check(sink, source, cable, config)
             .or_else(|| self.extra.check(sink, source, cable, config))
     }
+
+    fn warnings(
+        &self,
+        sink: &SinkCapabilities,
+        source: &SourceCapabilities,
+        cable: &CableCapabilities,
+        config: &CandidateConfig<'_>,
+        warn: &mut dyn FnMut(W),
+    ) {
+        self.base.warnings(sink, source, cable, config, warn);
+        self.extra.warnings(sink, source, cable, config, warn);
+    }
 }
 
 /// `Layered<E, R>` is a `ConstraintEngine` when `E` is an engine and `R` is a rule
@@ -141,12 +181,13 @@ where
 ///
 /// Runs the base engine first, then the extra rule. With alloc, violations from
 /// both are collected. Without alloc, the base engine short-circuits on its first
-/// violation before the extra rule is reached; any warnings accumulated by the base
-/// are propagated through.
+/// violation before the extra rule is reached. When both accept, the base engine's
+/// warnings come first, then the extra rule's; without alloc, up to
+/// [`MAX_WARNINGS`][super::MAX_WARNINGS] in all.
 impl<E, R> super::ConstraintEngine for Layered<E, R>
 where
     E: super::ConstraintEngine,
-    R: ConstraintRule<E::Violation>,
+    R: ConstraintRule<E::Violation, E::Warning>,
 {
     type Warning = E::Warning;
     type Violation = E::Violation;
@@ -158,242 +199,29 @@ where
         cable: &CableCapabilities,
         config: &CandidateConfig<'_>,
     ) -> CheckResult<Self::Warning, Self::Violation> {
-        #[cfg(any(feature = "alloc", feature = "std"))]
-        {
-            match self.base.check(sink, source, cable, config) {
-                Err(mut violations) => {
+        match self.base.check(sink, source, cable, config) {
+            // A complete base pass collects the extra rule's violation too; one that
+            // stopped early (no alloc) is passed on as it is.
+            Err(mut violations) => {
+                if violations.is_complete() {
                     if let Some(v) = self.extra.check(sink, source, cable, config) {
                         violations.push(v);
                     }
-                    Err(violations)
                 }
-                Ok(warnings) => {
-                    if let Some(v) = self.extra.check(sink, source, cable, config) {
-                        Err(vec![v])
-                    } else {
-                        Ok(warnings)
-                    }
+                Err(violations)
+            }
+            Ok(mut warnings) => {
+                if let Some(v) = self.extra.check(sink, source, cable, config) {
+                    Err(super::Violations::new(v))
+                } else {
+                    self.extra
+                        .warnings(sink, source, cable, config, &mut |w| warnings.push(w));
+                    Ok(warnings)
                 }
             }
-        }
-        #[cfg(not(any(feature = "alloc", feature = "std")))]
-        {
-            let warnings = self.base.check(sink, source, cable, config)?;
-            if let Some(v) = self.extra.check(sink, source, cable, config) {
-                return Err(v);
-            }
-            Ok(warnings)
         }
     }
 }
 #[cfg(all(test, any(feature = "alloc", feature = "std")))]
-mod tests {
-    use super::*;
-    use crate::diagnostic::Diagnostic;
-    use crate::engine::{ConstraintEngine, DefaultConstraintEngine};
-    use crate::output::warning::Violation;
-    use crate::types::{CableCapabilities, CandidateConfig, SinkCapabilities, SourceCapabilities};
-    use display_types::cea861::HdmiForumFrl;
-    use display_types::{ColorBitDepth, ColorFormat, VideoMode};
-
-    fn mode() -> VideoMode {
-        VideoMode::new(1920, 1080, 60u16, false)
-    }
-
-    fn config(mode: &VideoMode) -> CandidateConfig<'_> {
-        CandidateConfig {
-            mode,
-            color_encoding: ColorFormat::Rgb444,
-            bit_depth: ColorBitDepth::Depth8,
-            frl_rate: HdmiForumFrl::NotSupported,
-            dsc_enabled: false,
-        }
-    }
-
-    fn sink() -> SinkCapabilities {
-        SinkCapabilities::default()
-    }
-    fn source() -> SourceCapabilities {
-        SourceCapabilities::default()
-    }
-    fn cable() -> CableCapabilities {
-        CableCapabilities::default()
-    }
-
-    struct AlwaysPass;
-    struct FailEncoding;
-    struct FailDepth;
-
-    impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for AlwaysPass {
-        fn display_name(&self) -> &'static str {
-            "always_pass"
-        }
-        fn check(
-            &self,
-            _: &SinkCapabilities,
-            _: &SourceCapabilities,
-            _: &CableCapabilities,
-            _: &CandidateConfig<'_>,
-        ) -> Option<V> {
-            None
-        }
-    }
-
-    impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for FailEncoding {
-        fn display_name(&self) -> &'static str {
-            "fail_encoding"
-        }
-        fn check(
-            &self,
-            _: &SinkCapabilities,
-            _: &SourceCapabilities,
-            _: &CableCapabilities,
-            _: &CandidateConfig<'_>,
-        ) -> Option<V> {
-            Some(Violation::ColorEncodingUnsupported.into())
-        }
-    }
-
-    impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for FailDepth {
-        fn display_name(&self) -> &'static str {
-            "fail_depth"
-        }
-        fn check(
-            &self,
-            _: &SinkCapabilities,
-            _: &SourceCapabilities,
-            _: &CableCapabilities,
-            _: &CandidateConfig<'_>,
-        ) -> Option<V> {
-            Some(Violation::BitDepthUnsupported.into())
-        }
-    }
-
-    // --- TaggingAdapter ---
-
-    #[test]
-    fn tagging_adapter_display_name_delegates_to_inner() {
-        let adapter = TaggingAdapter(AlwaysPass);
-        assert_eq!(
-            ConstraintRule::<TaggedViolation<Violation>>::display_name(&adapter),
-            "always_pass"
-        );
-        let adapter = TaggingAdapter(FailEncoding);
-        assert_eq!(
-            ConstraintRule::<TaggedViolation<Violation>>::display_name(&adapter),
-            "fail_encoding"
-        );
-    }
-
-    // --- Layered<R1, R2> as ConstraintRule ---
-
-    #[test]
-    fn layered_rule_display_name_is_layered() {
-        let rule: Layered<AlwaysPass, AlwaysPass> = Layered::new(AlwaysPass, AlwaysPass);
-        assert_eq!(ConstraintRule::<Violation>::display_name(&rule), "layered");
-    }
-
-    #[test]
-    fn layered_rule_both_pass() {
-        let m = mode();
-        let rule = Layered::new(AlwaysPass, AlwaysPass);
-        let result =
-            ConstraintRule::<Violation>::check(&rule, &sink(), &source(), &cable(), &config(&m));
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn layered_rule_base_fails_short_circuits() {
-        let m = mode();
-        // Base returns ColorEncodingUnsupported; extra would return BitDepthUnsupported.
-        // Only the base violation should be present since or_else short-circuits.
-        let rule = Layered::new(FailEncoding, FailDepth);
-        let result =
-            ConstraintRule::<Violation>::check(&rule, &sink(), &source(), &cable(), &config(&m));
-        assert!(matches!(result, Some(Violation::ColorEncodingUnsupported)));
-    }
-
-    #[test]
-    fn layered_rule_base_passes_extra_fails() {
-        let m = mode();
-        let rule = Layered::new(AlwaysPass, FailDepth);
-        let result =
-            ConstraintRule::<Violation>::check(&rule, &sink(), &source(), &cable(), &config(&m));
-        assert!(matches!(result, Some(Violation::BitDepthUnsupported)));
-    }
-
-    // --- Layered<E, R> as ConstraintEngine ---
-
-    fn empty_engine() -> DefaultConstraintEngine<Violation> {
-        DefaultConstraintEngine::with_checks(&[])
-    }
-
-    #[test]
-    fn layered_engine_both_pass() {
-        let m = mode();
-        let engine = Layered::new(empty_engine(), TaggingAdapter(AlwaysPass));
-        assert!(
-            engine
-                .check(&sink(), &source(), &cable(), &config(&m))
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn layered_engine_base_passes_extra_fails() {
-        let m = mode();
-        let engine = Layered::new(empty_engine(), TaggingAdapter(FailDepth));
-        let violations = engine
-            .check(&sink(), &source(), &cable(), &config(&m))
-            .unwrap_err();
-        assert!(
-            violations
-                .iter()
-                .any(|v| matches!(v.violation, Violation::BitDepthUnsupported))
-        );
-    }
-
-    #[test]
-    fn layered_engine_base_fails_extra_violation_also_collected() {
-        let m = mode();
-        // Base engine with ColorEncodingCheck; default sink → no color caps → fires.
-        static BASE_RULES: &[&(dyn ConstraintRule<Violation> + Sync)] =
-            &[&crate::engine::checks::ColorEncodingCheck];
-        let engine = Layered::new(
-            DefaultConstraintEngine::with_checks(BASE_RULES),
-            TaggingAdapter(FailDepth),
-        );
-        let violations = engine
-            .check(&sink(), &source(), &cable(), &config(&m))
-            .unwrap_err();
-        assert!(
-            violations
-                .iter()
-                .any(|v| matches!(v.violation, Violation::ColorEncodingUnsupported))
-        );
-        assert!(
-            violations
-                .iter()
-                .any(|v| matches!(v.violation, Violation::BitDepthUnsupported))
-        );
-    }
-
-    #[test]
-    fn layered_engine_base_fails_extra_passes_only_base_violations() {
-        let m = mode();
-        static BASE_RULES: &[&(dyn ConstraintRule<Violation> + Sync)] =
-            &[&crate::engine::checks::ColorEncodingCheck];
-        let engine = Layered::new(
-            DefaultConstraintEngine::with_checks(BASE_RULES),
-            TaggingAdapter(AlwaysPass),
-        );
-        let violations = engine
-            .check(&sink(), &source(), &cable(), &config(&m))
-            .unwrap_err();
-        assert_eq!(violations.len(), 1);
-        assert!(matches!(
-            violations[0].violation,
-            Violation::ColorEncodingUnsupported
-        ));
-    }
-}
+#[path = "rule_tests.rs"]
+mod tests;

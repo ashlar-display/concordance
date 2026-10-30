@@ -10,30 +10,21 @@ use crate::diagnostic::Diagnostic;
 use crate::output::warning::{TaggedViolation, Violation};
 use crate::types::{CableCapabilities, CandidateConfig, SinkCapabilities, SourceCapabilities};
 
-#[cfg(any(feature = "alloc", feature = "std"))]
-use alloc::vec::Vec;
-
 pub use rule::{CheckList, ConstraintRule};
 
-/// Maximum number of warnings that can be accumulated in a single constraint check
-/// on no-alloc targets.
+pub mod result;
+pub use result::{Violations, Warnings};
+
+/// Maximum number of warnings a [`Warnings`] stores in a single constraint check on
+/// no-alloc targets.
 ///
-/// When the engine accepts a configuration and has collected this many warnings,
-/// any further warnings are silently dropped. Increase this constant (and recompile)
-/// if more capacity is needed during debugging.
+/// Further warnings are not stored; [`Warnings::dropped`] counts them.
 pub const MAX_WARNINGS: usize = 8;
 
-/// The result of a constraint check.
-///
-/// - **alloc/std**: `Result<Vec<W>, Vec<V>>` — all warnings on success, all violations on failure.
-/// - **no-alloc**: `Result<[Option<W>; MAX_WARNINGS], V>` — up to [`MAX_WARNINGS`] warnings on
-///   success, the first violation encountered on failure.
-#[cfg(any(feature = "alloc", feature = "std"))]
-pub type CheckResult<W, V> = Result<Vec<W>, Vec<V>>;
-
-/// The result of a constraint check (no-alloc).
-#[cfg(not(any(feature = "alloc", feature = "std")))]
-pub type CheckResult<W, V> = Result<[Option<W>; MAX_WARNINGS], V>;
+/// The result of a constraint check: the [`Warnings`] of an accepted candidate, or the
+/// [`Violations`] of a rejected one. The same type in every build; see [`result`] for what
+/// each holds with and without alloc.
+pub type CheckResult<W, V> = Result<Warnings<W>, Violations<V>>;
 
 /// Determines whether a given configuration is valid for the supplied capabilities.
 ///
@@ -91,6 +82,8 @@ pub trait ConstraintEngine {
 /// #     fn display_name(&self) -> &'static str { "my_hdr_check" }
 /// #     fn check(&self, _: &SinkCapabilities, _: &SourceCapabilities,
 /// #              _: &CableCapabilities, _: &CandidateConfig<'_>) -> Option<MyViolation> { None }
+/// #     fn warnings(&self, _: &SinkCapabilities, _: &SourceCapabilities, _: &CableCapabilities,
+/// #                 _: &CandidateConfig<'_>, _: &mut dyn FnMut(concordance::Warning)) {}
 /// # }
 /// static MY_CHECKS: CheckList<MyViolation> = &[&MyHdrCheck];
 ///
@@ -154,35 +147,7 @@ impl<V: Diagnostic> fmt::Debug for DefaultConstraintEngine<V> {
 }
 
 #[cfg(all(test, any(feature = "alloc", feature = "std")))]
-mod tests {
-    use super::*;
-    use crate::output::warning::Violation;
-
-    /// `Clone::clone` must compile and produce an engine that behaves identically
-    /// to the original. Calling it exercises the hand-written `Clone` impl that
-    /// delegates to the derived `Copy`.
-    #[test]
-    fn clone_produces_equivalent_engine() {
-        let original = DefaultConstraintEngine::default();
-        let cloned = original.clone();
-        // Both should format identically — same check list, same display names.
-        assert_eq!(alloc::format!("{original:?}"), alloc::format!("{cloned:?}"));
-    }
-
-    /// The `Debug` impl formats the engine as an ordered list of rule display names.
-    /// The output must be non-empty and contain at least one known built-in rule name.
-    #[test]
-    fn debug_lists_rule_names() {
-        let engine = DefaultConstraintEngine::<Violation>::default();
-        let output = alloc::format!("{engine:?}");
-        assert!(!output.is_empty());
-        // Spot-check one well-known built-in rule name.
-        assert!(
-            output.contains("frl_ceiling"),
-            "expected 'frl_ceiling' in debug output, got: {output}"
-        );
-    }
-}
+mod tests;
 
 impl<V: Diagnostic> ConstraintEngine for DefaultConstraintEngine<V> {
     type Warning = crate::output::warning::Warning;
@@ -195,34 +160,30 @@ impl<V: Diagnostic> ConstraintEngine for DefaultConstraintEngine<V> {
         cable: &CableCapabilities,
         config: &CandidateConfig<'_>,
     ) -> CheckResult<Self::Warning, Self::Violation> {
-        #[cfg(any(feature = "alloc", feature = "std"))]
-        {
-            let mut violations = Vec::new();
-            for rule in self.checks {
-                if let Some(violation) = rule.check(sink, source, cable, config) {
-                    violations.push(TaggedViolation {
-                        rule: rule.display_name(),
-                        violation,
-                    });
+        // With alloc every rule runs and every violation is kept; without it the pass
+        // stops at the first violation and says so.
+        let mut violations: Option<Violations<Self::Violation>> = None;
+        for rule in self.checks {
+            if let Some(violation) = rule.check(sink, source, cable, config) {
+                let tagged = TaggedViolation {
+                    rule: rule.display_name(),
+                    violation,
+                };
+                match &mut violations {
+                    Some(v) => v.push(tagged),
+                    None => violations = Some(Violations::new(tagged)),
                 }
-            }
-            if violations.is_empty() {
-                Ok(Vec::new())
-            } else {
-                Err(violations)
+                #[cfg(not(any(feature = "alloc", feature = "std")))]
+                return Err(violations.take().expect("just set").stopped_early());
             }
         }
-        #[cfg(not(any(feature = "alloc", feature = "std")))]
-        {
-            for rule in self.checks {
-                if let Some(violation) = rule.check(sink, source, cable, config) {
-                    return Err(TaggedViolation {
-                        rule: rule.display_name(),
-                        violation,
-                    });
-                }
-            }
-            Ok(Default::default())
+        if let Some(v) = violations {
+            return Err(v);
         }
+        let mut warnings = Warnings::new();
+        for rule in self.checks {
+            rule.warnings(sink, source, cable, config, &mut |w| warnings.push(w));
+        }
+        Ok(warnings)
     }
 }

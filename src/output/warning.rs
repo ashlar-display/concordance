@@ -96,6 +96,33 @@ pub enum Warning {
     /// Cable bandwidth is marginal for the selected mode and may degrade under load.
     #[error("cable bandwidth marginal for selected mode")]
     CableBandwidthMarginal,
+
+    /// The FRL rate carries the timing under some readings of the public capacity
+    /// computation and not under others; `deciding` names the assumptions that decide.
+    ///
+    /// The full report, with every intermediate value, is
+    /// [`FrlCapacityCheck::report`][crate::engine::checks::FrlCapacityCheck::report].
+    #[error(
+        "FRL rate {rate:?} is marginal for this timing: {shortfall} under the strict reading (deciding: {deciding:?})"
+    )]
+    FrlCapacityMarginal {
+        /// The candidate's FRL rate.
+        rate: display_types::cea861::HdmiForumFrl,
+        /// The assumptions that decide whether it fits.
+        deciding: crate::frl::Assumptions,
+        /// What the strict evaluation fails on.
+        shortfall: crate::frl::FrlShortfall,
+    },
+
+    /// The FRL capacity could not be checked, or not fully: the candidate is accepted
+    /// without that check.
+    #[error("FRL capacity at {rate:?} not verified: {reason}")]
+    FrlCapacityUnverified {
+        /// The candidate's FRL rate.
+        rate: display_types::cea861::HdmiForumFrl,
+        /// What is missing.
+        reason: crate::frl::FrlUnverified,
+    },
 }
 
 /// A constraint violation produced when a candidate configuration is rejected.
@@ -169,39 +196,21 @@ pub enum Violation {
         /// Maximum declared by the sink in Hz.
         max_hz: u16,
     },
+
+    /// The FRL rate cannot carry the timing under any reading of the public capacity
+    /// computation (see [`frl`][crate::frl]).
+    ///
+    /// The full report, with every intermediate value, is
+    /// [`FrlCapacityCheck::report`][crate::engine::checks::FrlCapacityCheck::report].
+    #[error("FRL rate {rate:?} cannot carry the timing: {shortfall}")]
+    FrlCapacityExceeded {
+        /// The candidate's FRL rate.
+        rate: display_types::cea861::HdmiForumFrl,
+        /// The condition the strict evaluation failed.
+        shortfall: crate::frl::FrlShortfall,
+    },
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    extern crate alloc;
-    use alloc::format;
-
-    #[test]
-    fn limit_source_display() {
-        assert_eq!(format!("{}", LimitSource::Sink), "sink");
-        assert_eq!(format!("{}", LimitSource::Source), "source");
-        assert_eq!(format!("{}", LimitSource::Cable), "cable");
-    }
-
-    #[test]
-    fn tagged_violation_display_includes_rule_and_message() {
-        let tv = TaggedViolation {
-            rule: "my_rule",
-            violation: Violation::ColorEncodingUnsupported,
-        };
-        assert_eq!(
-            format!("{tv}"),
-            "[my_rule] color encoding not supported by sink"
-        );
-    }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn tagged_violation_rule_deserializes_as_empty_string() {
-        let json = r#"{"rule":"original","violation":"ColorEncodingUnsupported"}"#;
-        let de: TaggedViolation<Violation> = serde_json::from_str(json).unwrap();
-        assert_eq!(de.rule, "");
-        assert!(matches!(de.violation, Violation::ColorEncodingUnsupported));
-    }
-}
+#[path = "warning_tests.rs"]
+mod tests;
