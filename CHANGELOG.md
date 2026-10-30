@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-30
+
 ### Breaking changes
 
 - **Requires display-types 0.5.** concordance's public types (`VideoMode` and the colour
