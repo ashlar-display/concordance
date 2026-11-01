@@ -165,7 +165,7 @@ impl<V: Diagnostic + From<Violation>> ConstraintRule<V> for TmdsClockCheck {
             .and_then(|v| v.max_tmds_clock_mhz)
             .map(|mhz| mhz as u32 * 1000)
             .unwrap_or(u32::MAX);
-        // HF-SCDB max_tmds_rate_mhz == 0 means ≤ 340 MHz per HDMI 2.1a §10.3.6.
+        // HF-SCDB max_tmds_rate_mhz == 0 means ≤ 340 MHz (HDMI 2.1a).
         let hf_limit = sink
             .hdmi_forum
             .as_ref()

@@ -9,8 +9,7 @@
 //!
 //! # Provenance: no ground truth
 //!
-//! The HDMI 2.1 specification is not public, and this computation does not come from it.
-//! It follows the public implementations of the same procedure: amdgpu's
+//! This computation follows the public implementations of the same procedure: amdgpu's
 //! `dml1_frl_cap_chk` (Linux, `drivers/gpu/drm/amd/display/dc/dml/`) and i915's
 //! `intel_hdmi_frl_dfm` (posted to intel-gfx, 2026-10). They share the procedure and its
 //! constants and differ in details. Where one of them contradicts its own comments or its

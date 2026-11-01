@@ -2,7 +2,7 @@
 
 use display_types::cea861::HdmiForumFrl;
 
-/// HDMI specification version declared by the cable.
+/// HDMI version declared by the cable.
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +24,7 @@ pub enum HdmiSpec {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CableCapabilities {
-    /// HDMI specification version declared by the cable.
+    /// HDMI version declared by the cable.
     pub hdmi_spec: HdmiSpec,
 
     /// Maximum FRL rate the cable can carry.

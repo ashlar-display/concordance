@@ -76,7 +76,7 @@ fn source_with_tmds_limit(max_khz: u32) -> SourceCapabilities {
 }
 
 /// Sink with an HF-SCDB carrying `max_tmds_rate_mhz` but no VSDB.
-/// Pass `0` to exercise the "≤ 340 MHz" sentinel defined in HDMI 2.1a §10.3.6.
+/// Pass `0` to exercise the "≤ 340 MHz" sentinel HDMI 2.1a defines.
 fn sink_with_hf_tmds_limit(max_tmds_rate_mhz: u16) -> SinkCapabilities {
     SinkCapabilities {
         hdmi_forum: Some(HdmiForumSinkCap::new(

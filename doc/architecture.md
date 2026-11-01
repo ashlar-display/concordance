@@ -7,14 +7,14 @@ list of viable configurations. Answers: "what modes can I drive on this display,
 priority order, using what color format and bit depth?"
 
 Concordance is the policy layer of the stack. Parsing layers below it make no judgements.
-Hardware layers above it implement specification. Concordance is explicitly opinionated, but
+Hardware layers above it implement the standard. Concordance is explicitly opinionated, but
 its opinions are configurable and its reasoning is always visible.
 
 ## Scope
 
 Concordance covers:
 
-- validation of candidate configurations against HDMI 2.1 specification constraints,
+- validation of candidate configurations against HDMI 2.1 constraints,
 - enumeration of all candidate configurations from the intersection of sink, source, and cable
   capabilities,
 - ranking of accepted candidates according to a configurable policy,
@@ -155,7 +155,7 @@ implementations for each slot and falls back to the defaults when none is suppli
 Determines whether a given configuration is valid for the supplied sink, source, and cable.
 Returns structured violations, not just a boolean.
 
-The default implementation enforces HDMI specification rules, in this order
+The default implementation enforces HDMI rules, in this order
 (`engine::checks::DEFAULT_CHECKS`): FRL ceiling, refresh rate range, pixel clock ceiling,
 TMDS clock ceiling, colour encoding, bit depth, DSC, and last FRL capacity (the costliest,
 and a candidate rejected for a more basic reason is reported for that reason). Callers can wrap or
@@ -218,8 +218,7 @@ blanking, the active video can borrow what it needs from the blanking (at most 4
 tribytes), and the line's characters plus the link overhead fit in the characters the rate
 delivers per line.
 
-**No ground truth.** The HDMI 2.1 specification is not public, and this computation does
-not come from it. It follows the public implementations of the same procedure, amdgpu's
+**No ground truth.** This computation follows the public implementations of the same procedure, amdgpu's
 `dml1_frl_cap_chk` and i915's FRL DFM, which share the procedure and its constants and
 differ in details. Where one contradicts its own comments or other formulas, the
 consistent reading is used (the blanking time counts one character per tribyte; the
@@ -231,8 +230,8 @@ layout and rate questions, the audio load, and EDID 1.3 versus 1.4 for DTD borde
 **Evaluated at every reading.** `frl_capacity` evaluates every combination of the
 assumptions that apply and reports the worst (`strict`) and the best (`permissive`)
 evaluation, with every intermediate value, and the assumptions that alone decide. That
-band is the honest extent of what is known; when a point is settled (specification
-access, an erratum, hardware evidence), its flag stops applying and the band narrows.
+band is the honest extent of what is known; when a point is settled (a further public
+source, an erratum, hardware evidence), its flag stops applying and the band narrows.
 All arithmetic is exact integer arithmetic, `no_std`, no allocation.
 
 | Strict | Permissive | Outcome |
@@ -264,7 +263,7 @@ candidates, is the ranker's and `NegotiationPolicy`'s (see criterion 1b below).
 #### Rule injection
 
 `ConstraintEngine` enables full replacement of the constraint policy, but replacement
-requires reimplementing all HDMI specification rules — forking in disguise. For the common
+requires reimplementing all HDMI rules — forking in disguise. For the common
 case of adding rules on top of the default checks, a finer-grained unit of extensibility
 is provided:
 
@@ -352,12 +351,12 @@ let configs = NegotiatorBuilder::default()
 `DefaultConstraintEngine` is itself decomposed into `ConstraintRule` implementations
 internally, so advanced callers who need selective control — including or excluding
 specific built-in checks — can compose their own engine from individual rules without
-reimplementing any specification logic.
+reimplementing any of the HDMI rules.
 
 #### Hard filters for compositor and driver callers
 
 `with_extra_rule` is the right mechanism for any go/no-go constraint that does not belong
-in the HDMI specification rule set — resolution floors, refresh rate ceilings, aspect ratio
+in the HDMI rule set — resolution floors, refresh rate ceilings, aspect ratio
 enforcement, or platform-specific bandwidth caps. A rule that returns `Some(violation)` for
 every candidate outside an acceptable range will exclude those candidates from the ranked
 output cleanly, without touching the ranker or the policy.
