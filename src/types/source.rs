@@ -6,7 +6,7 @@ bitflags::bitflags! {
     /// Source quirk flags that relax specific constraint checks.
     ///
     /// Flags are defined by concordance and correspond to known cases where a
-    /// source or its driver diverges from the HDMI specification in a predictable
+    /// source or its driver diverges from HDMI in a predictable
     /// way. Pass `QuirkFlags::empty()` (the default) when no quirks apply.
     ///
     /// Callers cannot define their own bits; use

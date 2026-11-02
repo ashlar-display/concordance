@@ -29,7 +29,7 @@ pub type CheckResult<W, V> = Result<Warnings<W>, Violations<V>>;
 /// Determines whether a given configuration is valid for the supplied capabilities.
 ///
 /// Returns structured violations rather than a boolean, so callers can surface
-/// specific rejection reasons. The default implementation enforces HDMI specification
+/// specific rejection reasons. The default implementation enforces HDMI
 /// rules; callers can wrap or replace it to add vendor-specific constraint rules.
 ///
 /// See [`ConstraintRule`] and [`rule::Layered`] for rule injection without replacing
@@ -55,7 +55,7 @@ pub trait ConstraintEngine {
     ) -> CheckResult<Self::Warning, Self::Violation>;
 }
 
-/// Default HDMI specification constraint engine.
+/// Default HDMI constraint engine.
 ///
 /// Generic over the violation type `V`, which defaults to the built-in [`Violation`]
 /// enum. Callers that need a richer violation hierarchy can define their own type

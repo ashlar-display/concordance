@@ -27,7 +27,7 @@ on this display, in what priority order, using what color format and bit depth?"
 
 The library takes three caller-supplied structs — `SinkCapabilities`, `SourceCapabilities`,
 and `CableCapabilities` — and runs them through a three-stage pipeline: enumerate all
-candidate configurations, check each against HDMI specification constraints, rank the
+candidate configurations, check each against HDMI constraints, rank the
 accepted candidates according to a policy. The output is a ranked `Vec<NegotiatedConfig>`,
 each entry carrying the resolved mode, color format, FRL tier, and any non-fatal warnings.
 A `ReasoningTrace` on each entry records why a configuration was accepted or rejected, so
@@ -111,7 +111,7 @@ full type fidelity — no wrapping, no loss of structured information.
 **FRL rates that can carry the mode.** An FRL rate within every ceiling is rejected when it
 cannot carry the timing: audio in the blanking, borrowing, and the line's characters with
 the link overhead. A candidate whose capacity cannot be checked (no blanking, DSC, unknown
-audio) is accepted with a warning saying so. The HDMI 2.1 specification is not public; the computation follows the public
+audio) is accepted with a warning saying so. The computation follows the public
 implementations (amdgpu, i915) and evaluates every reading where they disagree, so a rate
 that fits under some readings only is accepted with a warning naming what decides, and
 `NegotiationPolicy` ranks it after the sure ones. See `doc/architecture.md`.

@@ -54,7 +54,7 @@ Important expectations:
 
 ## Test philosophy
 
-Concordance should be strict about HDMI specification compliance, but practical about
+Concordance should be strict about HDMI compliance, but practical about
 real-world hardware inconsistencies.
 
 The test suite should reflect that balance by checking both:
