@@ -14,6 +14,7 @@
 //! Without `alloc`, [`is_config_viable`], [`enumerator::CandidateEnumerator`], and
 //! [`SliceEnumerator`][enumerator::SliceEnumerator] are available.
 #![no_std]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
