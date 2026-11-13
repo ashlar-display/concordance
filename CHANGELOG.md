@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checked it.
 - **`doc/setup.md` lists the checks CI runs**: clippy and the tests in every feature set,
   rustdoc with every feature, the bare-metal `no_std` builds and the MSRV check.
+- **`doc/testing.md` describes the feature sets** CI runs the tests in, and how the
+  README's and the crate documentation's examples are compiled as doctests.
 
 ## [0.3.0] - 2026-10-30
 

@@ -52,6 +52,19 @@ Important expectations:
 - any input produces controlled output (violations, warnings) rather than undefined behaviour,
 - unknown or conflicting capability values do not break pipeline invariants.
 
+## Feature sets
+
+CI runs the tests with the default features, with `serde`, with `alloc` only and with no
+default features, on stable and on the MSRV. Without `alloc` the builder and the ranker do
+not exist, so their tests are gated on `alloc` like the code they test, as are the
+enumerator's; the constraint engine, `is_config_viable` and the FRL capacity model are
+tested in every build. The bare `no_std` and `alloc`-only builds are
+compiled for `thumbv7em-none-eabi`, which has no `std`.
+
+The README's Rust examples run as doctests (`ReadmeDoctests` in `src/lib.rs`), on default
+capabilities, and so do the examples in the crate documentation (`doc/architecture.md`);
+those that need `alloc` are wrapped in a hidden `#[cfg(feature = "alloc")]`.
+
 ## Test philosophy
 
 Concordance should be strict about HDMI compliance, but practical about
