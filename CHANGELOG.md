@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **docs.rs marks the items that need a feature** (`alloc`, `std`, `serde`) with the
   `doc_cfg` badge, enabled only in docs.rs builds.
 
+### Changed
+
+- **The README's Ashlar block links the stack's crate list** instead of naming every crate,
+  so it no longer goes stale on crates.io when a crate is added.
+
 ### Fixed
 
 - **The custom rule example in the crate documentation compiles without `alloc`**: it uses
