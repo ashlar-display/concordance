@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   false`); it never pushes. The coverage job keeps them to push its ratchet branch.
 - **CI fails on `main` when `Cargo.toml` has a `[patch]` section**: `cargo package` drops
   it, so a release built with one would not build from crates.io.
+- **Clippy lints the tests too, in every feature set**: `--all-targets`, once each with the
+  default features, none, `alloc` only and `serde`, in CI and in the publish workflow's
+  `verify` job; it linted only the library with the default features.
 
 ## [0.3.0] - 2026-10-30
 
