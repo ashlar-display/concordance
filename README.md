@@ -29,10 +29,24 @@ For embedded and firmware targets, the constraint engine is also exposed as a st
 `no_std`-compatible probe:
 
 ```rust
+# use concordance::{CableCapabilities, SinkCapabilities, SourceCapabilities};
+# use display_types::cea861::HdmiForumFrl;
+# // A sink that takes 4K60 RGB at 8 bpc over TMDS (HF-SCDB: 600 MHz, SCDC).
+# let hf = display_types::cea861::HdmiForumSinkCap::new(1, 600, true, false, false, false, false, false, false, false,
+#     HdmiForumFrl::Rate12Gbps4Lanes, false, false, false, false, false, false, false, false, false, false, false,
+#     None, None, None);
+# let mut capable = SinkCapabilities::default();
+# capable.color_capabilities.rgb444 = display_types::ColorBitDepths::BPC_8;
+# capable.hdmi_forum = Some(hf);
+# let (source, cable) = (SourceCapabilities::default(), CableCapabilities::unconstrained());
+# // The example runs twice: the capable sink takes the `Ok` arm, a sink that declares
+# // nothing the `Err` arm.
+# assert!(probe(&capable, &source, &cable));
+# assert!(!probe(&SinkCapabilities::default(), &source, &cable));
+# fn probe(sink: &SinkCapabilities, source: &SourceCapabilities, cable: &CableCapabilities) -> bool {
 use concordance::{is_config_viable, SinkCapabilities, SourceCapabilities, CableCapabilities, CandidateConfig};
 use display_types::{ColorBitDepth, ColorFormat};
 use display_types::cea861::{HdmiForumFrl, vic_to_mode};
-# let (sink, source, cable) = (SinkCapabilities::default(), SourceCapabilities::default(), CableCapabilities::default());
 
 // For standard CTA modes, use vic_to_mode — it carries the exact pixel clock from
 // the CEA-861 timing table, so bandwidth ceiling checks are precise.
@@ -53,6 +67,8 @@ match is_config_viable(&sink, &source, &cable, &config) {
         for v in violations.iter() { eprintln!("rejected: {v}"); }
     }
 }
+# is_config_viable(sink, source, cable, &config).is_ok()
+# }
 ```
 
 For the full ranked pipeline (`alloc`/`std`):
@@ -61,7 +77,16 @@ For the full ranked pipeline (`alloc`/`std`):
 # #[cfg(feature = "alloc")] {
 use concordance::NegotiatorBuilder;
 # use concordance::{CableCapabilities, SinkCapabilities, SourceCapabilities};
-# let (sink, source, cable) = (SinkCapabilities::default(), SourceCapabilities::default(), CableCapabilities::default());
+# use display_types::cea861::{HdmiForumFrl, vic_to_mode};
+# // A sink that declares 4K60 and takes it as RGB at 8 bpc over TMDS.
+# let hf = display_types::cea861::HdmiForumSinkCap::new(1, 600, true, false, false, false, false, false, false, false,
+#     HdmiForumFrl::Rate12Gbps4Lanes, false, false, false, false, false, false, false, false, false, false, false,
+#     None, None, None);
+# let mut sink = SinkCapabilities::default();
+# sink.color_capabilities.rgb444 = display_types::ColorBitDepths::BPC_8;
+# sink.hdmi_forum = Some(hf);
+# sink.supported_modes = concordance::types::SupportedModes::from_vec(vec![vic_to_mode(97).unwrap()]).0;
+# let (source, cable) = (SourceCapabilities::default(), CableCapabilities::unconstrained());
 
 let configs = NegotiatorBuilder::default()
     .negotiate(&sink, &source, &cable);
@@ -74,6 +99,8 @@ for cfg in &configs {
     }
     println!(" {:?} {:?}", cfg.resolved.color_encoding, cfg.resolved.bit_depth);
 }
+# assert_eq!(configs.len(), 1);
+# assert_eq!(configs[0].resolved.mode.refresh_rate, Some(display_types::RefreshRate::integral(60)));
 # }
 ```
 
@@ -152,7 +179,8 @@ the `serde` feature flag, covering inputs, outputs, and policy types.
 | `alloc` | no      | Enables the ranked pipeline without `std`                |
 | `serde` | no      | Derives `Serialize`/`Deserialize` on all public types    |
 
-Without `alloc` or `std`, only `is_config_viable` is available. The three input structs and
+Without `alloc` or `std`, `is_config_viable` and the enumerators (`CandidateEnumerator`,
+`SliceEnumerator`) are available. The three input structs and
 `CandidateConfig` are available at all tiers.
 
 ## `no_std` builds

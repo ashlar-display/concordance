@@ -28,8 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Internal
 
 - **The README's Rust examples run as doctests** (`ReadmeDoctests` in `lib.rs`, compiled
-  only for `cargo test`), on default capabilities; the examples that need `alloc` run only
-  with it. That is how the error above was found.
+  only for `cargo test`), against a hidden sink that takes 4K60 RGB at 8 bpc: the probe
+  example runs once with it and once with a sink that declares nothing, so both arms run,
+  and hidden asserts check the outcomes and the ranked pipeline's one configuration. The
+  examples that need `alloc` run only with it. That is how the error above was found.
 - **The tests pass `clippy --all-targets`**: struct update syntax instead of assigning fields
   after `Default::default()`, `slice::from_ref` instead of a cloned one-element slice, and
   `#[expect]` with a reason where a lint does not fit (the test of the hand-written
