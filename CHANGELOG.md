@@ -87,6 +87,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   percentage points, as CI checks it, not 0.1%.
 - **The coverage job runs cargo with `--locked`**, as the other jobs do, so it measures
   the build the tests ran; `doc/setup.md`'s commands match.
+- **The negotiate example is format-checked and linted**, in CI and in the publish
+  workflow's `verify` job; as its own workspace, the root `cargo fmt` and `clippy` did not
+  reach it.
 
 ## [0.3.0] - 2026-10-30
 

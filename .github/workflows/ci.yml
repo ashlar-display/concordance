@@ -94,6 +94,14 @@ jobs:
       - name: Build (no_std)
         run: cargo build --locked --no-default-features --target thumbv7em-none-eabi
 
+      # The example is its own workspace, which the root fmt and clippy do not reach. It
+      # reads the displays in /sys/class/drm, so CI builds it without running it.
+      - name: Format check (negotiate example)
+        run: cargo fmt --check --manifest-path examples/negotiate/Cargo.toml
+
+      - name: Clippy (negotiate example)
+        run: cargo clippy --locked --manifest-path examples/negotiate/Cargo.toml -- -D warnings
+
       - name: Build negotiate example
         run: cargo build --locked --manifest-path examples/negotiate/Cargo.toml
 
