@@ -38,8 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limit (as for the source); under the performance and power saving policies, configs
   equal on every quality criterion fall through to the progressive-before-interlaced
   tiebreak; a warning other than an FRL capacity warning does not deprioritize a config.
-  Rust 1.100 counts more lines than 1.99 for the same code, which put line coverage below
-  the baseline (98.87% against 99.08%) without a code change; with these it is 99.12%.
+  Rust 1.100 counts the same code's lines differently from 1.99 (1592 lines instead of
+  1624, measured from a clean `target/`), which put line coverage below the baseline
+  (98.87% against 99.08%) without a code change; with these it is 99.12%.
 - **The published `.crate` holds only what the crate needs**: `include` in `Cargo.toml`
   limits it to the sources, `doc/`, the README, changelog and license; it also shipped the
   CI workflows, Dependabot configuration, coverage baseline, tests and the example crate.
@@ -75,6 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README's and the crate documentation's examples are compiled as doctests.
 - **`CONTRIBUTING.md` matches the CI checks**: clippy over all targets, rustdoc with
   `-D warnings`, every feature set, the bare-metal builds and the MSRV.
+- **The coverage job's cache is keyed on the Rust version** as well as `Cargo.lock`, so a
+  `target/` built by an older Rust is not restored: `cargo llvm-cov clean --workspace`
+  leaves its instrumented binaries behind, and the report would count their lines as
+  uncovered (it did so in other Ashlar crates after the update to Rust 1.100).
 
 ## [0.3.0] - 2026-10-30
 
