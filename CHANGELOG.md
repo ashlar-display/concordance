@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The README's Rust examples run as doctests** (`ReadmeDoctests` in `lib.rs`, compiled
   only for `cargo test`), on default capabilities; the examples that need `alloc` run only
   with it. That is how the error above was found.
+- **The tests pass `clippy --all-targets`**: struct update syntax instead of assigning fields
+  after `Default::default()`, `slice::from_ref` instead of a cloned one-element slice, and
+  `#[expect]` with a reason where a lint does not fit (the test of the hand-written
+  `Clone`, a ranking-test helper with one argument per field).
 
 ## [0.3.0] - 2026-10-30
 

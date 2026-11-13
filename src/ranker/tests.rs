@@ -18,6 +18,10 @@ fn mode(width: u16, height: u16) -> VideoMode {
 }
 
 /// Builds a `NegotiatedConfig` with the given fields for use in ranking tests.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per field of the config under test"
+)]
 fn config(
     width: u16,
     height: u16,

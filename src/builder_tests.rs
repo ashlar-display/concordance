@@ -130,8 +130,10 @@ fn with_engine_accept_all_overrides_default_rejection() {
     // engine rejects it. AcceptAllEngine bypasses that check entirely.
     let mode = VideoMode::new(1920, 1080, 60u16, false);
     let sink = rgb8_sink();
-    let mut source = SourceCapabilities::default();
-    source.max_tmds_clock = 50_000; // 50 MHz — below 1080p@60 8 bpc
+    let source = SourceCapabilities {
+        max_tmds_clock: 50_000, // 50 MHz — below 1080p@60 8 bpc
+        ..SourceCapabilities::default()
+    };
     let cable = CableCapabilities::unconstrained();
 
     let configs = NegotiatorBuilder::default()
@@ -360,7 +362,7 @@ fn negotiate_and_negotiate_with_log_agree_on_accepted() {
     let cable = CableCapabilities::unconstrained();
 
     let accepted_plain = NegotiatorBuilder::default()
-        .with_enumerator(SliceEnumerator::new(&[mode.clone()]))
+        .with_enumerator(SliceEnumerator::new(core::slice::from_ref(&mode)))
         .negotiate(&sink, &source, &cable);
 
     let (accepted_log, _) = NegotiatorBuilder::default()
