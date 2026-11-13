@@ -106,6 +106,12 @@ jobs:
       - name: Test (std + serde)
         run: cargo test --locked --features serde
 
+      - name: Test (alloc only)
+        run: cargo test --locked --no-default-features --features alloc
+
+      - name: Test (no default features)
+        run: cargo test --locked --no-default-features
+
       - name: Build (alloc only)
         run: cargo build --locked --no-default-features --features alloc
 

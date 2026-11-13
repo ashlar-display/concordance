@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **rustdoc runs with every feature and `-D warnings`**, as docs.rs builds, in CI and in
   the publish workflow's `verify` job: `-D missing_docs` alone let broken intra-doc links
   through, and the `serde` items were not checked.
+- **The tests run in every feature set**: also with `alloc` only and with no default
+  features, in CI and in the publish workflow's `verify` job; those builds were only
+  compiled, which is how the custom rule example's failure went unnoticed.
 
 ## [0.3.0] - 2026-10-30
 
