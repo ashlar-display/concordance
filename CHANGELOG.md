@@ -94,6 +94,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reach it.
 - **`doc/setup.md` describes the negotiate example** and when to refresh its lock file, and
   the README has a `no_std` builds section.
+- **The MSRV job shows why it failed**: `cargo msrv verify` runs without
+  `--output-format minimal`, which printed only `true` or `false` and dropped the compiler
+  error.
 
 ## [0.3.0] - 2026-10-30
 
