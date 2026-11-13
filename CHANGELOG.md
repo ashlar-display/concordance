@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The custom rule example in the crate documentation compiles without `alloc`**: it uses
+  `NegotiatorBuilder`, which needs `alloc`, so `cargo test --no-default-features` failed on
+  it; it is now compiled only where that type exists.
+
 ## [0.3.0] - 2026-10-30
 
 ### Breaking changes
