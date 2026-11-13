@@ -19,7 +19,12 @@ cargo clippy --all-targets --no-default-features -- -D warnings
 cargo clippy --all-targets --no-default-features --features alloc -- -D warnings
 cargo clippy --all-targets --features serde -- -D warnings
 cargo rustdoc --all-features -- -D warnings
+cargo fmt --check --manifest-path examples/negotiate/Cargo.toml
+cargo clippy --locked --manifest-path examples/negotiate/Cargo.toml -- -D warnings
 ```
+
+The last two check the negotiate example, its own workspace, which the root `cargo fmt`
+and `clippy` do not reach.
 
 ## Running tests
 
@@ -51,7 +56,7 @@ The MSRV is `rust-version` in `Cargo.toml`. CI checks it with
 toolchain:
 
 ```sh
-cargo install cargo-msrv --locked
+cargo install cargo-msrv --version 0.19.6 --locked
 cargo msrv verify -- cargo test --locked
 cargo msrv verify -- cargo test --locked --features serde
 cargo msrv verify -- cargo test --locked --no-default-features --features alloc

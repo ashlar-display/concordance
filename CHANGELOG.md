@@ -97,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The MSRV job shows why it failed**: `cargo msrv verify` runs without
   `--output-format minimal`, which printed only `true` or `false` and dropped the compiler
   error.
+- **`doc/setup.md` lists the negotiate example's format and lint checks** with the others,
+  and installs the cargo-msrv version CI pins (0.19.6).
 
 ## [0.3.0] - 2026-10-30
 
