@@ -33,6 +33,9 @@ is fine.
 - Public items need rustdoc comments, and intra-doc links must resolve
   (`cargo rustdoc --all-features -- -D warnings` must pass).
 - `#![forbid(unsafe_code)]` is enforced; no unsafe code.
+- A claim about HDMI behaviour (a rule, a default, a threshold, a register encoding) cites
+  at least two independent public implementations (repository, commit, file and line).
+  Where implementations differ, the behaviour is a setting with the majority as default.
 - Keep `no_std` compatibility. `is_config_viable` and all constraint rules must compile
   without `alloc` or `std`. The ranked pipeline is gated behind
   `#[cfg(any(feature = "alloc", feature = "std"))]`.
@@ -48,7 +51,7 @@ is fine.
   integration test is a bonus.
 - CI must be green before a PR can merge: fmt, clippy, docs, the tests in every feature
   set, the bare-metal `no_std` builds, the same tests and builds on the MSRV (Rust 1.85),
-  and coverage must not drop more than 0.1% below the baseline (stored in
+  and coverage must not drop more than 0.1 percentage points below the baseline (stored in
   `.coverage-baseline`). New constraint logic without tests will likely trip this.
 
 ## Review process
