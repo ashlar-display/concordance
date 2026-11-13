@@ -40,6 +40,7 @@ For embedded and firmware targets, the constraint engine is also exposed as a st
 use concordance::{is_config_viable, SinkCapabilities, SourceCapabilities, CableCapabilities, CandidateConfig};
 use display_types::{ColorBitDepth, ColorFormat};
 use display_types::cea861::{HdmiForumFrl, vic_to_mode};
+# let (sink, source, cable) = (SinkCapabilities::default(), SourceCapabilities::default(), CableCapabilities::default());
 
 // For standard CTA modes, use vic_to_mode — it carries the exact pixel clock from
 // the CEA-861 timing table, so bandwidth ceiling checks are precise.
@@ -65,26 +66,48 @@ match is_config_viable(&sink, &source, &cable, &config) {
 For the full ranked pipeline (`alloc`/`std`):
 
 ```rust
+# #[cfg(feature = "alloc")] {
 use concordance::NegotiatorBuilder;
+# use concordance::{CableCapabilities, SinkCapabilities, SourceCapabilities};
+# let (sink, source, cable) = (SinkCapabilities::default(), SourceCapabilities::default(), CableCapabilities::default());
 
 let configs = NegotiatorBuilder::default()
     .negotiate(&sink, &source, &cable);
 
 for cfg in &configs {
-    println!("{}×{}@{} {:?} {:?}",
-        cfg.resolved.mode.width, cfg.resolved.mode.height, cfg.resolved.mode.refresh_rate,
-        cfg.resolved.color_encoding, cfg.resolved.bit_depth);
+    let mode = &cfg.resolved.mode;
+    match mode.refresh_rate {
+        Some(rate) => print!("{}×{}@{}", mode.width, mode.height, rate),
+        None => print!("{}×{}", mode.width, mode.height),
+    }
+    println!(" {:?} {:?}", cfg.resolved.color_encoding, cfg.resolved.bit_depth);
 }
+# }
 ```
 
 Custom constraint rules can be injected without replacing the default engine:
 
 ```rust
+# #[cfg(feature = "alloc")] {
 use concordance::NegotiatorBuilder;
+# use concordance::{CableCapabilities, CandidateConfig, SinkCapabilities, SourceCapabilities, Violation};
+# use concordance::engine::rule::ConstraintRule;
+# struct PlatformBandwidthRule { max_khz: u32 }
+# impl PlatformBandwidthRule { fn new(max_khz: u32) -> Self { Self { max_khz } } }
+# impl ConstraintRule<Violation> for PlatformBandwidthRule {
+#     fn display_name(&self) -> &'static str { "platform_bandwidth" }
+#     fn check(&self, _: &SinkCapabilities, _: &SourceCapabilities,
+#              _: &CableCapabilities, _: &CandidateConfig<'_>) -> Option<Violation> { None }
+#     fn warnings(&self, _: &SinkCapabilities, _: &SourceCapabilities, _: &CableCapabilities,
+#                 _: &CandidateConfig<'_>, _: &mut dyn FnMut(concordance::Warning)) {}
+# }
+# let (sink, source, cable) = (SinkCapabilities::default(), SourceCapabilities::default(), CableCapabilities::default());
+# let limits = 594_000u32;
 
 let configs = NegotiatorBuilder::default()
     .with_extra_rule(PlatformBandwidthRule::new(limits))
     .negotiate(&sink, &source, &cable);
+# }
 ```
 
 ## Why concordance
