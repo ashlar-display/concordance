@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The tests run in every feature set**: also with `alloc` only and with no default
   features, in CI and in the publish workflow's `verify` job; those builds were only
   compiled, which is how the custom rule example's failure went unnoticed.
+- **The `no_std` builds target a bare-metal target** (`thumbv7em-none-eabi`), in CI and in
+  the publish workflow's `verify` job; on the host, `std` was still there for a dependency
+  that pulls it in, so the builds did not show that the crate needs none.
 
 ## [0.3.0] - 2026-10-30
 
