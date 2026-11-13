@@ -10,6 +10,7 @@ repository = "https://github.com/ashlar-display/concordance"
 homepage = "https://ashlar-display.org"
 keywords = ["ashlar", "hdmi", "no-std", "negotiation", "display"]
 categories = ["hardware-support", "embedded", "no-std", "no-std::no-alloc"]
+include = ["src/**", "doc/**", "README.md", "CHANGELOG.md", "LICENSE"]
 
 [features]
 default = ["std"]

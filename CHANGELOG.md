@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tiebreak; a warning other than an FRL capacity warning does not deprioritize a config.
   Rust 1.100 counts more lines than 1.99 for the same code, which put line coverage below
   the baseline (98.87% against 99.08%) without a code change; with these it is 99.12%.
+- **The published `.crate` holds only what the crate needs**: `include` in `Cargo.toml`
+  limits it to the sources, `doc/`, the README, changelog and license; it also shipped the
+  CI workflows, Dependabot configuration, coverage baseline, tests and the example crate.
 
 ## [0.3.0] - 2026-10-30
 
