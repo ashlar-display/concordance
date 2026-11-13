@@ -80,6 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `target/` built by an older Rust is not restored: `cargo llvm-cov clean --workspace`
   leaves its instrumented binaries behind, and the report would count their lines as
   uncovered (it did so in other Ashlar crates after the update to Rust 1.100).
+- **The publish workflow's `verify` job fails on a `[patch]` section** too, as `ci.yml`
+  does on `main`: the release does not wait for `main`'s CI.
 
 ## [0.3.0] - 2026-10-30
 
