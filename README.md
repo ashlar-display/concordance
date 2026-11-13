@@ -155,6 +155,12 @@ the `serde` feature flag, covering inputs, outputs, and policy types.
 Without `alloc` or `std`, only `is_config_viable` is available. The three input structs and
 `CandidateConfig` are available at all tiers.
 
+## `no_std` builds
+
+concordance is `#![no_std]`. Without `alloc`, `is_config_viable` checks one configuration
+with no allocator; CI builds both the bare and the `alloc`-only configurations for a
+bare-metal target ([doc/setup.md](doc/setup.md) has the commands).
+
 ## Stack position
 
 concordance is the policy layer. It consumes the typed model; it does not produce it.

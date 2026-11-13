@@ -62,6 +62,23 @@ cargo msrv verify --target thumbv7em-none-eabi \
   -- cargo build --locked --no-default-features --target thumbv7em-none-eabi
 ```
 
+## The negotiate example
+
+`examples/negotiate` reads the displays in `/sys/class/drm` (Linux), so CI builds it
+without running it:
+
+```sh
+cargo run --locked --manifest-path examples/negotiate/Cargo.toml
+```
+
+It is its own workspace with a tracked `Cargo.lock`, which records concordance's version
+and dependencies through the path dependency. After changing `Cargo.toml`, refresh it and
+commit it, or the `--locked` build (here and in CI) fails:
+
+```sh
+cargo check --manifest-path examples/negotiate/Cargo.toml
+```
+
 ## Coverage
 
 Install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and the LLVM
