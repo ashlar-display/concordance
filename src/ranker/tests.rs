@@ -987,3 +987,57 @@ fn dsc_penalty_comes_before_the_frl_criterion() {
         Ordering::Less
     );
 }
+
+#[test]
+fn performance_equal_quality_falls_through_to_progressive() {
+    // Same refresh rate, bit depth and color format: the performance criteria are all
+    // equal, so the progressive-before-interlaced tiebreak decides.
+    let progressive = base();
+    let interlaced = config(
+        1920,
+        1080,
+        60,
+        true,
+        ColorFormat::Rgb444,
+        ColorBitDepth::Depth8,
+        HdmiForumFrl::NotSupported,
+        false,
+    );
+    let policy = NegotiationPolicy::BEST_PERFORMANCE;
+    assert_eq!(
+        compare_configs(&progressive, &interlaced, &policy, NATIVE),
+        Ordering::Less
+    );
+}
+
+#[test]
+fn power_saving_equal_quality_falls_through_to_progressive() {
+    // As above, under the power saving policy.
+    let progressive = base();
+    let interlaced = config(
+        1920,
+        1080,
+        60,
+        true,
+        ColorFormat::Rgb444,
+        ColorBitDepth::Depth8,
+        HdmiForumFrl::NotSupported,
+        false,
+    );
+    let policy = NegotiationPolicy::POWER_SAVING;
+    assert_eq!(
+        compare_configs(&progressive, &interlaced, &policy, NATIVE),
+        Ordering::Less
+    );
+}
+
+#[test]
+fn a_warning_other_than_frl_capacity_does_not_deprioritize() {
+    use crate::ranker::policy::FrlCandidateHandling::Deprioritize;
+    let mut cfg = base();
+    cfg.warnings.push(Warning::DscActive);
+    let mut policy = NegotiationPolicy::BEST_QUALITY;
+    policy.frl_marginal = Deprioritize;
+    policy.frl_unverified = Deprioritize;
+    assert!(!super::frl_deprioritized(&cfg, &policy));
+}

@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after `Default::default()`, `slice::from_ref` instead of a cloned one-element slice, and
   `#[expect]` with a reason where a lint does not fit (the test of the hand-written
   `Clone`, a ranking-test helper with one argument per field).
+- **Tests for the paths Rust 1.100 counts as uncovered**: a cable TMDS limit of 0 is no
+  limit (as for the source); under the performance and power saving policies, configs
+  equal on every quality criterion fall through to the progressive-before-interlaced
+  tiebreak; a warning other than an FRL capacity warning does not deprioritize a config.
+  Rust 1.100 counts more lines than 1.99 for the same code, which put line coverage below
+  the baseline (98.87% against 99.08%) without a code change; with these it is 99.12%.
 
 ## [0.3.0] - 2026-10-30
 
