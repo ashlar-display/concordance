@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **docs.rs marks the items that need a feature** (`alloc`, `std`, `serde`) with the
+  `doc_cfg` badge, enabled only in docs.rs builds.
+
+### Changed
+
+- **The README's Ashlar block links the stack's crate list** instead of naming every crate,
+  so it no longer goes stale on crates.io when a crate is added.
+
+### Fixed
+
+- **The custom rule example in the crate documentation compiles without `alloc`**: it uses
+  `NegotiatorBuilder`, which needs `alloc`, so `cargo test --no-default-features` failed on
+  it; it is now compiled only where that type exists.
+- **The README's examples compile against the current API.** The ranked pipeline example
+  printed `mode.refresh_rate` with `{}`, but it is an `Option<RefreshRate>`.
+
+### Internal
+
+- **The README's Rust examples run as doctests** (`ReadmeDoctests` in `lib.rs`, compiled
+  only for `cargo test`), against a hidden sink that takes 4K60 RGB at 8 bpc: the probe
+  example runs once with it and once with a sink that declares nothing, so both arms run,
+  and hidden asserts check the outcomes and the ranked pipeline's one configuration. The
+  examples that need `alloc` run only with it. That is how the error above was found.
+- **The tests pass `clippy --all-targets`**: struct update syntax instead of assigning fields
+  after `Default::default()`, `slice::from_ref` instead of a cloned one-element slice, and
+  `#[expect]` with a reason where a lint does not fit (the test of the hand-written
+  `Clone`, a ranking-test helper with one argument per field).
+- **Tests for the paths Rust 1.100 counts as uncovered**: a cable TMDS limit of 0 is no
+  limit (as for the source); under the performance and power saving policies, configs
+  equal on every quality criterion fall through to the progressive-before-interlaced
+  tiebreak; a warning other than an FRL capacity warning does not deprioritize a config.
+  Rust 1.100 counts the same code's lines differently from 1.99 (1592 lines instead of
+  1624, measured from a clean `target/`), which put line coverage below the baseline
+  (98.87% against 99.08%) without a code change; with these it is 99.12%.
+- **The published `.crate` holds only what the crate needs**: `include` in `Cargo.toml`
+  limits it to the sources, `doc/`, the README, changelog and license; it also shipped the
+  CI workflows, Dependabot configuration, coverage baseline, `.gitignore`, `CONTRIBUTING.md` and the tests.
+- **The documentation is built as docs.rs builds it, weekly**: `docs.yml` runs
+  `cargo doc --all-features` with nightly and `--cfg docsrs` (and `-D warnings`), so a
+  nightly change to the `doc_cfg` feature badges shows up before it breaks a docs.rs build.
+- **CI runs with a read-only token by default**: `ci.yml` sets `permissions: contents: read`;
+  the coverage job keeps the write permissions it needs to open its ratchet PR. The test job
+  ran with the repository's default token permissions.
+- **CI's test job does not keep the checkout's git credentials** (`persist-credentials:
+  false`); it never pushes. The coverage job keeps them to push its ratchet branch.
+- **CI fails on `main` when `Cargo.toml` has a `[patch]` section**: `cargo package` drops
+  it, so a release built with one would not build from crates.io.
+- **Clippy lints the tests too, in every feature set**: `--all-targets`, once each with the
+  default features, none, `alloc` only and `serde`, in CI and in the publish workflow's
+  `verify` job; it linted only the library with the default features.
+- **rustdoc runs with every feature and `-D warnings`**, as docs.rs builds, in CI and in
+  the publish workflow's `verify` job: `-D missing_docs` alone let broken intra-doc links
+  through, and the `serde` items were not checked.
+- **The tests run in every feature set**: also with `alloc` only and with no default
+  features, in CI and in the publish workflow's `verify` job; those builds were only
+  compiled, which is how the custom rule example's failure went unnoticed.
+- **The `no_std` builds target a bare-metal target** (`thumbv7em-none-eabi`), in CI and in
+  the publish workflow's `verify` job; on the host, `std` was still there for a dependency
+  that pulls it in, so the builds did not show that the crate needs none.
+- **The MSRV is checked**: an `MSRV` job in CI and in the publish workflow (which waits for
+  it) runs the tests in every feature set and the bare-metal builds on the `rust-version`
+  from `Cargo.toml` (1.85) with `cargo msrv verify`; the crate declared it, and nothing
+  checked it.
+- **`doc/setup.md` lists the checks CI runs**: clippy and the tests in every feature set,
+  rustdoc with every feature, the bare-metal `no_std` builds and the MSRV check.
+- **`doc/testing.md` describes the feature sets** CI runs the tests in, and how the
+  README's and the crate documentation's examples are compiled as doctests.
+- **`CONTRIBUTING.md` matches the CI checks**: clippy over all targets, rustdoc with
+  `-D warnings`, every feature set, the bare-metal builds and the MSRV.
+- **The coverage job's cache is keyed on the Rust version** as well as `Cargo.lock`, so a
+  `target/` built by an older Rust is not restored: `cargo llvm-cov clean --workspace`
+  leaves its instrumented binaries behind, and the report would count their lines as
+  uncovered (it did so in other Ashlar crates after the update to Rust 1.100).
+- **The publish workflow's `verify` job fails on a `[patch]` section** too, as `ci.yml`
+  does on `main`: the release does not wait for `main`'s CI.
+- **`CONTRIBUTING.md` states the provenance rule** for claims about HDMI behaviour (two
+  independent public implementations, cited), and gives the coverage tolerance as 0.1
+  percentage points, as CI checks it, not 0.1%.
+- **The coverage job runs cargo with `--locked`**, as the other jobs do, so it measures
+  the build the tests ran; `doc/setup.md`'s commands match.
+- **The negotiate example is format-checked and linted**, in CI and in the publish
+  workflow's `verify` job; as its own workspace, the root `cargo fmt` and `clippy` did not
+  reach it.
+- **`doc/setup.md` describes the negotiate example** and when to refresh its lock file, and
+  the README has a `no_std` builds section.
+- **The MSRV job shows why it failed**: `cargo msrv verify` runs without
+  `--output-format minimal`, which printed only `true` or `false` and dropped the compiler
+  error.
+- **`doc/setup.md` lists the negotiate example's format and lint checks** with the others,
+  and installs the cargo-msrv version CI pins (0.19.6).
+
 ## [0.3.0] - 2026-10-30
 
 ### Breaking changes

@@ -10,15 +10,7 @@
 
 > **Part of [Ashlar](https://ashlar-display.org)** — a display connection stack in Rust,
 > HDMI 2.1 first: from EDID parsing through mode negotiation to FRL link training.
->
-> [display-types](https://github.com/ashlar-display/display-types) ·
-> [piaf](https://github.com/ashlar-display/piaf) ·
-> **concordance** ·
-> [cartouche](https://github.com/ashlar-display/cartouche) ·
-> [culvert](https://github.com/ashlar-display/culvert) ·
-> [plumbob](https://github.com/ashlar-display/plumbob) ·
-> [hdmi-hal](https://github.com/ashlar-display/hdmi-hal) ·
-> [hdmi-hal-i2c-dev](https://github.com/ashlar-display/hdmi-hal-i2c-dev)
+> See [all crates](https://ashlar-display.org/crates.html).
 
 HDMI 2.1 mode negotiation — policy layer of the display connection stack.
 
@@ -37,6 +29,21 @@ For embedded and firmware targets, the constraint engine is also exposed as a st
 `no_std`-compatible probe:
 
 ```rust
+# use concordance::{CableCapabilities, SinkCapabilities, SourceCapabilities};
+# use display_types::cea861::HdmiForumFrl;
+# // A sink that takes 4K60 RGB at 8 bpc over TMDS (HF-SCDB: 600 MHz, SCDC).
+# let hf = display_types::cea861::HdmiForumSinkCap::new(1, 600, true, false, false, false, false, false, false, false,
+#     HdmiForumFrl::Rate12Gbps4Lanes, false, false, false, false, false, false, false, false, false, false, false,
+#     None, None, None);
+# let mut capable = SinkCapabilities::default();
+# capable.color_capabilities.rgb444 = display_types::ColorBitDepths::BPC_8;
+# capable.hdmi_forum = Some(hf);
+# let (source, cable) = (SourceCapabilities::default(), CableCapabilities::unconstrained());
+# // The example runs twice: the capable sink takes the `Ok` arm, a sink that declares
+# // nothing the `Err` arm.
+# assert!(probe(&capable, &source, &cable));
+# assert!(!probe(&SinkCapabilities::default(), &source, &cable));
+# fn probe(sink: &SinkCapabilities, source: &SourceCapabilities, cable: &CableCapabilities) -> bool {
 use concordance::{is_config_viable, SinkCapabilities, SourceCapabilities, CableCapabilities, CandidateConfig};
 use display_types::{ColorBitDepth, ColorFormat};
 use display_types::cea861::{HdmiForumFrl, vic_to_mode};
@@ -60,31 +67,66 @@ match is_config_viable(&sink, &source, &cable, &config) {
         for v in violations.iter() { eprintln!("rejected: {v}"); }
     }
 }
+# is_config_viable(sink, source, cable, &config).is_ok()
+# }
 ```
 
 For the full ranked pipeline (`alloc`/`std`):
 
 ```rust
+# #[cfg(feature = "alloc")] {
 use concordance::NegotiatorBuilder;
+# use concordance::{CableCapabilities, SinkCapabilities, SourceCapabilities};
+# use display_types::cea861::{HdmiForumFrl, vic_to_mode};
+# // A sink that declares 4K60 and takes it as RGB at 8 bpc over TMDS.
+# let hf = display_types::cea861::HdmiForumSinkCap::new(1, 600, true, false, false, false, false, false, false, false,
+#     HdmiForumFrl::Rate12Gbps4Lanes, false, false, false, false, false, false, false, false, false, false, false,
+#     None, None, None);
+# let mut sink = SinkCapabilities::default();
+# sink.color_capabilities.rgb444 = display_types::ColorBitDepths::BPC_8;
+# sink.hdmi_forum = Some(hf);
+# sink.supported_modes = concordance::types::SupportedModes::from_vec(vec![vic_to_mode(97).unwrap()]).0;
+# let (source, cable) = (SourceCapabilities::default(), CableCapabilities::unconstrained());
 
 let configs = NegotiatorBuilder::default()
     .negotiate(&sink, &source, &cable);
 
 for cfg in &configs {
-    println!("{}×{}@{} {:?} {:?}",
-        cfg.resolved.mode.width, cfg.resolved.mode.height, cfg.resolved.mode.refresh_rate,
-        cfg.resolved.color_encoding, cfg.resolved.bit_depth);
+    let mode = &cfg.resolved.mode;
+    match mode.refresh_rate {
+        Some(rate) => print!("{}×{}@{}", mode.width, mode.height, rate),
+        None => print!("{}×{}", mode.width, mode.height),
+    }
+    println!(" {:?} {:?}", cfg.resolved.color_encoding, cfg.resolved.bit_depth);
 }
+# assert_eq!(configs.len(), 1);
+# assert_eq!(configs[0].resolved.mode.refresh_rate, Some(display_types::RefreshRate::integral(60)));
+# }
 ```
 
 Custom constraint rules can be injected without replacing the default engine:
 
 ```rust
+# #[cfg(feature = "alloc")] {
 use concordance::NegotiatorBuilder;
+# use concordance::{CableCapabilities, CandidateConfig, SinkCapabilities, SourceCapabilities, Violation};
+# use concordance::engine::rule::ConstraintRule;
+# struct PlatformBandwidthRule { max_khz: u32 }
+# impl PlatformBandwidthRule { fn new(max_khz: u32) -> Self { Self { max_khz } } }
+# impl ConstraintRule<Violation> for PlatformBandwidthRule {
+#     fn display_name(&self) -> &'static str { "platform_bandwidth" }
+#     fn check(&self, _: &SinkCapabilities, _: &SourceCapabilities,
+#              _: &CableCapabilities, _: &CandidateConfig<'_>) -> Option<Violation> { None }
+#     fn warnings(&self, _: &SinkCapabilities, _: &SourceCapabilities, _: &CableCapabilities,
+#                 _: &CandidateConfig<'_>, _: &mut dyn FnMut(concordance::Warning)) {}
+# }
+# let (sink, source, cable) = (SinkCapabilities::default(), SourceCapabilities::default(), CableCapabilities::default());
+# let limits = 594_000u32;
 
 let configs = NegotiatorBuilder::default()
     .with_extra_rule(PlatformBandwidthRule::new(limits))
     .negotiate(&sink, &source, &cable);
+# }
 ```
 
 ## Why concordance
@@ -137,8 +179,15 @@ the `serde` feature flag, covering inputs, outputs, and policy types.
 | `alloc` | no      | Enables the ranked pipeline without `std`                |
 | `serde` | no      | Derives `Serialize`/`Deserialize` on all public types    |
 
-Without `alloc` or `std`, only `is_config_viable` is available. The three input structs and
+Without `alloc` or `std`, `is_config_viable` and the enumerators (`CandidateEnumerator`,
+`SliceEnumerator`) are available. The three input structs and
 `CandidateConfig` are available at all tiers.
+
+## `no_std` builds
+
+concordance is `#![no_std]`. Without `alloc`, `is_config_viable` checks one configuration
+with no allocator; CI builds both the bare and the `alloc`-only configurations for a
+bare-metal target ([doc/setup.md](doc/setup.md) has the commands).
 
 ## Stack position
 

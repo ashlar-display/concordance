@@ -5,6 +5,10 @@ use crate::output::warning::Violation;
 /// to the original. Calling it exercises the hand-written `Clone` impl that
 /// delegates to the derived `Copy`.
 #[test]
+#[expect(
+    clippy::clone_on_copy,
+    reason = "the test exercises the hand-written `Clone` impl"
+)]
 fn clone_produces_equivalent_engine() {
     let original = DefaultConstraintEngine::default();
     let cloned = original.clone();

@@ -14,6 +14,7 @@
 //! Without `alloc`, [`is_config_viable`], [`enumerator::CandidateEnumerator`], and
 //! [`SliceEnumerator`][enumerator::SliceEnumerator] are available.
 #![no_std]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
@@ -55,3 +56,8 @@ pub use output::rejection::RejectedConfig;
 pub use output::trace::ReasoningTrace;
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use types::{SinkBuildWarning, SupportedModes, sink_capabilities_from_display};
+
+// Compiles and runs the README's examples as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

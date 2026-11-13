@@ -330,6 +330,7 @@ impl NegotiatorBuilder<E, En, R> {
 A platform-specific caller writes only their rule and passes it in:
 
 ```rust,no_run
+# #[cfg(feature = "alloc")] {
 # use concordance::{NegotiatorBuilder, CableCapabilities, CandidateConfig, SinkCapabilities, SourceCapabilities, Violation};
 # use concordance::engine::rule::ConstraintRule;
 # struct PlatformBandwidthRule { max_khz: u32 }
@@ -346,6 +347,7 @@ A platform-specific caller writes only their rule and passes it in:
 let configs = NegotiatorBuilder::default()
     .with_extra_rule(PlatformBandwidthRule::new(limits))
     .negotiate(&sink, &source, &cable);
+# }
 ```
 
 `DefaultConstraintEngine` is itself decomposed into `ConstraintRule` implementations

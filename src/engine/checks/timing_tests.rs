@@ -637,3 +637,35 @@ fn extreme_pixel_clock_without_limits_does_not_overflow() {
         .is_none()
     );
 }
+
+#[test]
+fn zero_cable_tmds_limit_is_no_limit() {
+    use crate::output::warning::LimitSource;
+    // A cable with `max_tmds_clock: 0` sets no TMDS ceiling, as 0 does for the source:
+    // the source's 100 MHz limit binds, and without it the mode passes.
+    let cable = CableCapabilities {
+        max_tmds_clock: 0,
+        ..CableCapabilities::unconstrained()
+    };
+    let m = mode(60);
+    let check = |source: &SourceCapabilities| {
+        tmds_check(
+            &SinkCapabilities::default(),
+            source,
+            &cable,
+            &m,
+            ColorFormat::Rgb444,
+            ColorBitDepth::Depth8,
+            HdmiForumFrl::NotSupported,
+        )
+    };
+    assert!(matches!(
+        check(&source_with_tmds_limit(100_000)),
+        Some(Violation::TmdsClockExceeded {
+            limit_mhz: 100,
+            limit_source: LimitSource::Source,
+            ..
+        })
+    ));
+    assert!(check(&SourceCapabilities::default()).is_none());
+}
