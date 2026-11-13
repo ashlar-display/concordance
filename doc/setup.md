@@ -10,13 +10,56 @@ cd concordance
 cargo build
 ```
 
+## Running checks
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --no-default-features -- -D warnings
+cargo clippy --all-targets --no-default-features --features alloc -- -D warnings
+cargo clippy --all-targets --features serde -- -D warnings
+cargo rustdoc --all-features -- -D warnings
+```
+
 ## Running tests
 
 ```sh
-cargo test                                           # std (default)
-cargo test --features serde                          # std + serde
-cargo build --no-default-features --features alloc  # alloc-only build check
-cargo build --no-default-features                   # bare no_std build check
+cargo test                                         # std (default)
+cargo test --features serde                        # std + serde
+cargo test --no-default-features --features alloc  # alloc only
+cargo test --no-default-features                   # bare no_std
+```
+
+The README's examples and the crate documentation's run as doctests with the others. See
+[testing.md](testing.md) for what the tests cover.
+
+## `no_std` builds
+
+Without `std` the crate is `no_std`, with or without `alloc`. CI checks both on a bare
+target, which has no `std` for a dependency to pull in:
+
+```sh
+rustup target add thumbv7em-none-eabi
+cargo build --no-default-features --features alloc --target thumbv7em-none-eabi
+cargo build --no-default-features --target thumbv7em-none-eabi
+```
+
+## Checking the MSRV
+
+The MSRV is `rust-version` in `Cargo.toml`. CI checks it with
+[`cargo-msrv`](https://github.com/foresterre/cargo-msrv), which runs the checks on that
+toolchain:
+
+```sh
+cargo install cargo-msrv --locked
+cargo msrv verify -- cargo test --locked
+cargo msrv verify -- cargo test --locked --features serde
+cargo msrv verify -- cargo test --locked --no-default-features --features alloc
+cargo msrv verify -- cargo test --locked --no-default-features
+cargo msrv verify --target thumbv7em-none-eabi \
+  -- cargo build --locked --no-default-features --features alloc --target thumbv7em-none-eabi
+cargo msrv verify --target thumbv7em-none-eabi \
+  -- cargo build --locked --no-default-features --target thumbv7em-none-eabi
 ```
 
 ## Coverage

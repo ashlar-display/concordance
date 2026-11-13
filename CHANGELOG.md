@@ -69,6 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it) runs the tests in every feature set and the bare-metal builds on the `rust-version`
   from `Cargo.toml` (1.85) with `cargo msrv verify`; the crate declared it, and nothing
   checked it.
+- **`doc/setup.md` lists the checks CI runs**: clippy and the tests in every feature set,
+  rustdoc with every feature, the bare-metal `no_std` builds and the MSRV check.
 
 ## [0.3.0] - 2026-10-30
 
