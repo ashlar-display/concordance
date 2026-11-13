@@ -76,8 +76,8 @@ Measure coverage across all feature sets:
 
 ```sh
 cargo llvm-cov clean --workspace
-cargo llvm-cov --no-report
-cargo llvm-cov --no-report --features serde
+cargo llvm-cov --no-report --locked
+cargo llvm-cov --no-report --locked --features serde
 cargo llvm-cov report --summary-only
 ```
 
@@ -85,8 +85,8 @@ To update `.coverage-baseline` after improving coverage:
 
 ```sh
 cargo llvm-cov clean --workspace
-cargo llvm-cov --no-report
-cargo llvm-cov --no-report --features serde
+cargo llvm-cov --no-report --locked
+cargo llvm-cov --no-report --locked --features serde
 cargo llvm-cov report --json --summary-only \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(round(d['data'][0]['totals']['lines']['percent'], 2))" \
   > .coverage-baseline

@@ -191,8 +191,8 @@ jobs:
       - name: Measure coverage
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --no-report
-          cargo llvm-cov --no-report --features serde
+          cargo llvm-cov --no-report --locked
+          cargo llvm-cov --no-report --locked --features serde
           # Unit tests live in `foo_tests.rs` beside `foo.rs`, and in `tests.rs` beside a
           # `mod.rs`; only the crate's own code counts.
           LINES=$(cargo llvm-cov report --json --summary-only \

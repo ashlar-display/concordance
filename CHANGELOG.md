@@ -85,6 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`CONTRIBUTING.md` states the provenance rule** for claims about HDMI behaviour (two
   independent public implementations, cited), and gives the coverage tolerance as 0.1
   percentage points, as CI checks it, not 0.1%.
+- **The coverage job runs cargo with `--locked`**, as the other jobs do, so it measures
+  the build the tests ran; `doc/setup.md`'s commands match.
 
 ## [0.3.0] - 2026-10-30
 
