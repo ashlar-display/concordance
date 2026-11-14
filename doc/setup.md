@@ -117,3 +117,9 @@ cargo llvm-cov report --json --summary-only \
 Commit `.coverage-baseline` alongside the tests that raised it. CI will open a PR
 automatically when coverage improves on a push to `main` or `develop`, but you can also
 update it manually as part of your feature branch.
+
+Rust versions count lines differently, so the same code can measure differently on two
+versions. Measure the baseline with the Rust version CI's `stable` uses
+(`cargo +<version> llvm-cov …`), or CI can fail on a baseline that a different local
+version produced.
+

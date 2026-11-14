@@ -99,6 +99,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error.
 - **`doc/setup.md` lists the negotiate example's format and lint checks** with the others,
   and installs the cargo-msrv version CI pins (0.19.6).
+- **`doc/setup.md` says to measure the coverage baseline with the Rust version CI uses**:
+  Rust versions count lines differently, so a baseline measured with another version can
+  fail CI without a change in coverage.
 
 ## [0.3.0] - 2026-10-30
 
